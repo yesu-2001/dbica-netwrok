@@ -1,0 +1,95 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Document ID validation helper
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-\\.\\@]+$');
+    }
+
+    // Staff Member validation blueprint
+    function isValidStaff(data) {
+      return data.name is string && data.name.size() > 0 && data.name.size() <= 100
+        && data.email is string && data.email.size() > 0 && data.email.size() <= 150
+        && data.role is string && data.role in ['Super Admin', 'HR', 'Manager', 'Staff']
+        && data.department is string && data.department.size() > 0
+        && (!('status' in data) || data.status in ['Active', 'Inactive'])
+        && (!('portalPassword' in data) || (data.portalPassword is string && data.portalPassword.size() <= 128));
+    }
+
+    // Leave Request validation blueprint
+    function isValidLeaveRequest(data) {
+      return data.staffId is string && data.staffId.size() > 0 && data.staffId.size() <= 128
+        && data.leaveType is string && data.leaveType in ['Casual', 'Sick', 'Earned', 'Maternity', 'Paternity', 'Compensatory', 'Unpaid', 'Leave Without Pay (LWP)', 'Permission']
+        && data.startDate is string && data.startDate.size() >= 8 && data.startDate.size() <= 20
+        && data.endDate is string && data.endDate.size() >= 8 && data.endDate.size() <= 20
+        && data.totalDays is number && data.totalDays >= 0 && data.totalDays <= 365
+        && data.status is string && data.status in ['Pending', 'Approved', 'Rejected', 'Cancelled'];
+    }
+
+    // Department item validation blueprint
+    function isValidDepartment(data) {
+      return data.name is string && data.name.size() > 0 && data.name.size() <= 100
+        && (!('code' in data) || (data.code is string && data.code.size() <= 20));
+    }
+
+    // Dispatched Notification validation blueprint
+    function isValidNotification(data) {
+      return data.recipientName is string && data.recipientName.size() > 0 && data.recipientName.size() <= 100
+        && data.channel is string && data.channel in ['whatsapp', 'email', 'both']
+        && data.status is string && data.status in ['Delivered', 'Sent', 'Failed', 'Pending']
+        && data.subject is string && data.subject.size() <= 200
+        && data.message is string && data.message.size() <= 2000;
+    }
+
+    // Faculty and staff accounts & credentials
+    match /staff/{staffId} {
+      allow read: if true;
+      allow create: if isValidId(staffId) && isValidStaff(request.resource.data);
+      allow update: if isValidId(staffId) && isValidStaff(request.resource.data);
+      allow delete: if isValidId(staffId);
+    }
+
+    // Leave applications & status authorizations
+    match /leaveRequests/{requestId} {
+      allow read: if true;
+      allow create: if isValidId(requestId) && isValidLeaveRequest(request.resource.data);
+      allow update: if isValidId(requestId) && isValidLeaveRequest(request.resource.data);
+      allow delete: if isValidId(requestId);
+    }
+
+    // Academic and operational departments
+    match /departments/{departmentId} {
+      allow read: if true;
+      allow create, update: if isValidId(departmentId) && isValidDepartment(request.resource.data);
+      allow delete: if isValidId(departmentId);
+    }
+
+    // Global institutional leave thresholds and policies
+    match /settings/{settingId} {
+      allow read: if true;
+      allow create, update: if isValidId(settingId);
+      allow delete: if isValidId(settingId);
+    }
+
+    // Tamper-proof audit event history
+    match /auditLogs/{logId} {
+      allow read: if true;
+      allow create: if isValidId(logId) && request.resource.data.action is string;
+      allow update, delete: if isValidId(logId);
+    }
+
+    // Dispatched Email and WhatsApp notifications: create or update status, immutable history
+    match /notifications/{notificationId} {
+      allow read: if true;
+      allow create: if isValidId(notificationId) && isValidNotification(request.resource.data);
+      allow update: if isValidId(notificationId) && isValidNotification(request.resource.data);
+      allow delete: if false;
+    }
+
+    // System heartbeat connection
+    match /test/{testId} {
+      allow read, write: if isValidId(testId);
+    }
+  }
+}

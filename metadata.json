@@ -1,0 +1,6 @@
+{
+  "name": "DBICA - Leave Management",
+  "description": "Role-based staff leave management system for Don Bosco Institute of Communication Arts (DBICA) featuring multi-role access control, leave application workflow, team calendar, and staff directory.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
