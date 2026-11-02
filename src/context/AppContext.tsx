@@ -120,6 +120,8 @@ interface AppContextType {
     channel: NotificationChannel;
     subject: string;
     message: string;
+    targetStaffId?: string;
+    department?: string;
   }) => Promise<DispatchedNotification>;
 
   // System
@@ -1412,14 +1414,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     channel: NotificationChannel;
     subject: string;
     message: string;
+    targetStaffId?: string;
+    department?: string;
   }) => {
+    if (currentUser.role === 'Staff') {
+      throw new Error('Access denied: Staff members cannot dispatch broadcast notices.');
+    }
+
     const result = await notificationService.dispatchCustom(
       params.recipientName,
       params.phone,
       params.email,
       params.channel,
       params.subject,
-      params.message
+      params.message,
+      {
+        staffId: params.targetStaffId,
+        department: params.department,
+        senderId: currentUser.id,
+        senderName: currentUser.name,
+        senderRole: currentUser.role,
+      }
     );
     return result;
   };

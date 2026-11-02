@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
 import {
   MessageSquare,
@@ -17,8 +17,10 @@ import {
   Sparkles,
   Smartphone,
   RefreshCw,
+  Building,
+  Lock,
 } from 'lucide-react';
-import { DispatchedNotification, NotificationChannel, StaffMember } from '../types';
+import { NotificationChannel, StaffMember } from '../types';
 import { buildWhatsAppDirectUrl, formatWhatsAppPhone } from '../services/notificationService';
 
 export const NotificationDispatchCenter: React.FC = () => {
@@ -27,17 +29,31 @@ export const NotificationDispatchCenter: React.FC = () => {
     dispatchedNotifications,
     dispatchCustomNotification,
     currentUser,
+    departments: appDepartments,
     addToast,
   } = useApp();
 
+  const isSuperAdminOrHR = currentUser.role === 'Super Admin' || currentUser.role === 'HR';
+  const isManager = currentUser.role === 'Manager';
+  const isStaff = currentUser.role === 'Staff';
+
   // Filters & Search
   const [selectedChannel, setSelectedChannel] = useState<'all' | 'whatsapp' | 'email'>('all');
+  const [selectedDepartment, setSelectedDepartment] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
-  // Quick Dispatch Form State
+  // Available staff targets for composer depending on role
+  const availableTargetStaff = useMemo(() => {
+    if (isManager) {
+      return staffList.filter((s) => s.department === currentUser.department);
+    }
+    return staffList;
+  }, [staffList, isManager, currentUser.department]);
+
+  // Quick Dispatch Form State (for Super Admin, HR, Manager)
   const [isComposerOpen, setIsComposerOpen] = useState(false);
-  const [targetStaffId, setTargetStaffId] = useState<string>(staffList[0]?.id || '');
+  const [targetStaffId, setTargetStaffId] = useState<string>(availableTargetStaff[0]?.id || '');
   const [channel, setChannel] = useState<NotificationChannel>('both');
   const [templateType, setTemplateType] = useState<'acknowledgement' | 'reminder' | 'custom'>('acknowledgement');
   const [customSubject, setCustomSubject] = useState('');
@@ -45,7 +61,7 @@ export const NotificationDispatchCenter: React.FC = () => {
   const [isDispatching, setIsDispatching] = useState(false);
 
   // Selected target staff
-  const targetStaff = staffList.find((s) => s.id === targetStaffId) || staffList[0];
+  const targetStaff = availableTargetStaff.find((s) => s.id === targetStaffId) || availableTargetStaff[0];
 
   // Auto-generate template text when target changes
   const getTemplateText = (type: typeof templateType, staff: StaffMember) => {
@@ -78,6 +94,17 @@ export const NotificationDispatchCenter: React.FC = () => {
     setTimeout(() => setCopiedId(null), 2000);
   };
 
+  const handleOpenComposer = () => {
+    if (isStaff) {
+      addToast('Access Restricted', 'Staff members cannot dispatch administrative notices.', 'warning');
+      return;
+    }
+    if (availableTargetStaff.length > 0 && !availableTargetStaff.some((s) => s.id === targetStaffId)) {
+      setTargetStaffId(availableTargetStaff[0].id);
+    }
+    setIsComposerOpen(true);
+  };
+
   const handleSendCustom = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!targetStaff) return;
@@ -100,13 +127,15 @@ export const NotificationDispatchCenter: React.FC = () => {
     setIsDispatching(true);
 
     try {
-      const dispatched = await dispatchCustomNotification({
+      await dispatchCustomNotification({
         recipientName: targetStaff.name,
         phone: targetStaff.phone,
         email: targetStaff.email,
         channel,
         subject,
         message: messageToSend,
+        targetStaffId: targetStaff.id,
+        department: targetStaff.department,
       });
 
       addToast(
@@ -131,29 +160,68 @@ export const NotificationDispatchCenter: React.FC = () => {
     }
   };
 
-  // Filtered notifications list
-  const filtered = dispatchedNotifications.filter((n) => {
-    const matchesChannel =
-      selectedChannel === 'all' ||
-      (selectedChannel === 'whatsapp' && (n.channel === 'whatsapp' || n.channel === 'both')) ||
-      (selectedChannel === 'email' && (n.channel === 'email' || n.channel === 'both'));
+  // 1. Role-based scoping of notifications:
+  // - Super Admin / HR: See all organization-wide dispatches
+  // - Manager: See dispatches for staff in their department + direct messages to/from them
+  // - Staff: STRICT PRIVACY — strictly see only messages addressed to themselves
+  const visibleNotifications = useMemo(() => {
+    return dispatchedNotifications.filter((item) => {
+      if (isSuperAdminOrHR) return true;
 
-    const q = searchQuery.toLowerCase();
-    const matchesQuery =
-      !q ||
-      n.recipientName.toLowerCase().includes(q) ||
-      n.subject.toLowerCase().includes(q) ||
-      n.message.toLowerCase().includes(q) ||
-      (n.recipientPhone && n.recipientPhone.includes(q)) ||
-      (n.recipientEmail && n.recipientEmail.toLowerCase().includes(q));
+      // Identity check: is this notification addressed to the current logged-in user?
+      const isRecipientMe =
+        Boolean(item.metadata?.staffId && item.metadata.staffId === currentUser.id) ||
+        Boolean(item.recipientEmail && item.recipientEmail.trim().toLowerCase() === currentUser.email.trim().toLowerCase()) ||
+        Boolean(item.recipientName && item.recipientName.trim().toLowerCase() === currentUser.name.trim().toLowerCase()) ||
+        Boolean(
+          item.recipientPhone &&
+          currentUser.phone &&
+          item.recipientPhone.replace(/\D/g, '').length >= 10 &&
+          currentUser.phone.replace(/\D/g, '').length >= 10 &&
+          item.recipientPhone.replace(/\D/g, '').slice(-10) === currentUser.phone.replace(/\D/g, '').slice(-10)
+        );
 
-    return matchesChannel && matchesQuery;
-  });
+      if (isManager) {
+        const isDepartmentMember = Boolean(item.metadata?.department && item.metadata.department === currentUser.department);
+        const isSenderMe = Boolean(item.metadata?.senderId && item.metadata.senderId === currentUser.id);
+        return isDepartmentMember || isRecipientMe || isSenderMe;
+      }
 
-  const totalWhatsApp = dispatchedNotifications.filter(
+      // Staff role: STRICT PRIVACY
+      return isRecipientMe;
+    });
+  }, [dispatchedNotifications, currentUser, isSuperAdminOrHR, isManager]);
+
+  // 2. Filtered list based on user selections (channel, department, query)
+  const filtered = useMemo(() => {
+    return visibleNotifications.filter((n) => {
+      const matchesChannel =
+        selectedChannel === 'all' ||
+        (selectedChannel === 'whatsapp' && (n.channel === 'whatsapp' || n.channel === 'both')) ||
+        (selectedChannel === 'email' && (n.channel === 'email' || n.channel === 'both'));
+
+      const matchesDepartment =
+        selectedDepartment === 'all' ||
+        (n.metadata?.department && n.metadata.department === selectedDepartment);
+
+      const q = searchQuery.toLowerCase();
+      const matchesQuery =
+        !q ||
+        n.recipientName.toLowerCase().includes(q) ||
+        n.subject.toLowerCase().includes(q) ||
+        n.message.toLowerCase().includes(q) ||
+        (n.recipientPhone && n.recipientPhone.includes(q)) ||
+        (n.recipientEmail && n.recipientEmail.toLowerCase().includes(q)) ||
+        (n.metadata?.department && n.metadata.department.toLowerCase().includes(q));
+
+      return matchesChannel && matchesDepartment && matchesQuery;
+    });
+  }, [visibleNotifications, selectedChannel, selectedDepartment, searchQuery]);
+
+  const totalWhatsApp = visibleNotifications.filter(
     (n) => n.channel === 'whatsapp' || n.channel === 'both'
   ).length;
-  const totalEmail = dispatchedNotifications.filter(
+  const totalEmail = visibleNotifications.filter(
     (n) => n.channel === 'email' || n.channel === 'both'
   ).length;
 
@@ -164,28 +232,64 @@ export const NotificationDispatchCenter: React.FC = () => {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
           <div className="space-y-2 max-w-2xl">
             <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-blue-500/20 text-blue-300 text-xs font-semibold border border-blue-500/30">
-              <Sparkles className="w-3.5 h-3.5" />
-              <span>Multi-Channel Dispatch Engine • Live Cloud Firestore</span>
+              {isStaff ? (
+                <>
+                  <Lock className="w-3.5 h-3.5 text-blue-300" />
+                  <span>Personal Notification Stream • End-to-End Privacy</span>
+                </>
+              ) : isManager ? (
+                <>
+                  <Building className="w-3.5 h-3.5 text-blue-300" />
+                  <span>{currentUser.department} Departmental Dispatch Control</span>
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>Multi-Channel Dispatch Engine • Live Cloud Firestore</span>
+                </>
+              )}
             </div>
+
             <h2 className="text-xl sm:text-2xl font-bold tracking-tight">
-              Institutional Notification & Dispatch Center
+              {isStaff
+                ? 'My Notifications & Delivery Receipts'
+                : isManager
+                ? `Department Notification & Dispatch Center (${currentUser.department})`
+                : 'Institutional Notification & Dispatch Center'}
             </h2>
+
             <p className="text-slate-300 text-xs sm:text-sm leading-relaxed">
-              Automated confirmation and acknowledgement alerts are dispatched through official
-              institution <strong>Email</strong> and <strong>WhatsApp</strong> channels whenever faculty
-              submit leaves, receive approvals, or require scheduling notices.
+              {isStaff ? (
+                <>
+                  Official confirmation records and automated updates dispatched via <strong>Email</strong> and{' '}
+                  <strong>WhatsApp</strong> regarding your leave applications, authorizations, and DBICA notices.
+                </>
+              ) : isManager ? (
+                <>
+                  Automated delivery logs and direct dispatch for faculty and staff in the{' '}
+                  <strong>{currentUser.department}</strong> department, including leave application alerts and approvals.
+                </>
+              ) : (
+                <>
+                  Automated confirmation and acknowledgement alerts are dispatched through official
+                  institution <strong>Email</strong> and <strong>WhatsApp</strong> channels whenever faculty
+                  submit leaves, receive approvals, or require scheduling notices.
+                </>
+              )}
             </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-3">
-            <button
-              onClick={() => setIsComposerOpen(true)}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-lg shadow-emerald-600/30 transition-all active:scale-98"
-            >
-              <Send className="w-4 h-4" />
-              <span>Dispatch Custom Alert</span>
-            </button>
-          </div>
+          {!isStaff && (
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                onClick={handleOpenComposer}
+                className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-lg shadow-emerald-600/30 transition-all active:scale-98"
+              >
+                <Send className="w-4 h-4" />
+                <span>{isManager ? 'Dispatch Department Alert' : 'Dispatch Custom Alert'}</span>
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Metrics Grid */}
@@ -193,17 +297,17 @@ export const NotificationDispatchCenter: React.FC = () => {
           <div className="bg-slate-800/60 p-3.5 rounded-xl border border-slate-700/60">
             <div className="text-xs text-slate-400 font-medium flex items-center gap-1.5">
               <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Total Dispatched</span>
+              <span>{isStaff ? 'My Notifications' : isManager ? 'Dept Dispatches' : 'Total Dispatched'}</span>
             </div>
             <div className="text-2xl font-bold text-white mt-1">
-              {dispatchedNotifications.length}
+              {visibleNotifications.length}
             </div>
           </div>
 
           <div className="bg-slate-800/60 p-3.5 rounded-xl border border-slate-700/60">
             <div className="text-xs text-slate-400 font-medium flex items-center gap-1.5">
               <MessageSquare className="w-3.5 h-3.5 text-emerald-400" />
-              <span>WhatsApp Dispatches</span>
+              <span>WhatsApp Alerts</span>
             </div>
             <div className="text-2xl font-bold text-emerald-400 mt-1">{totalWhatsApp}</div>
           </div>
@@ -219,7 +323,7 @@ export const NotificationDispatchCenter: React.FC = () => {
           <div className="bg-slate-800/60 p-3.5 rounded-xl border border-slate-700/60">
             <div className="text-xs text-slate-400 font-medium flex items-center gap-1.5">
               <Smartphone className="w-3.5 h-3.5 text-amber-400" />
-              <span>Gateway Delivery</span>
+              <span>Gateway Status</span>
             </div>
             <div className="text-2xl font-bold text-amber-300 mt-1">100% Active</div>
           </div>
@@ -227,55 +331,79 @@ export const NotificationDispatchCenter: React.FC = () => {
       </div>
 
       {/* Filter and Search Bar */}
-      <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
-        <div className="relative w-full sm:w-80">
+      <div className="flex flex-col lg:flex-row items-center justify-between gap-4 bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
+        <div className="relative w-full lg:w-80">
           <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
           <input
             type="text"
-            placeholder="Search by faculty, subject, or phone..."
+            placeholder={isStaff ? 'Search your notifications...' : 'Search by faculty, subject, or phone...'}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full pl-9 pr-4 py-2 text-xs rounded-lg border border-slate-200 focus:outline-hidden focus:ring-2 focus:ring-blue-500"
           />
         </div>
 
-        <div className="flex items-center gap-2 w-full sm:w-auto">
-          <span className="text-xs font-medium text-slate-500 hidden sm:inline flex items-center gap-1">
-            <Filter className="w-3.5 h-3.5" /> Channel:
-          </span>
-          <div className="inline-flex p-1 bg-slate-100 rounded-lg text-xs font-medium w-full sm:w-auto">
-            <button
-              onClick={() => setSelectedChannel('all')}
-              className={`px-3 py-1.5 rounded-md transition-colors ${
-                selectedChannel === 'all'
-                  ? 'bg-white text-slate-900 shadow-xs font-semibold'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              All ({dispatchedNotifications.length})
-            </button>
-            <button
-              onClick={() => setSelectedChannel('whatsapp')}
-              className={`px-3 py-1.5 rounded-md flex items-center gap-1 transition-colors ${
-                selectedChannel === 'whatsapp'
-                  ? 'bg-white text-emerald-700 shadow-xs font-semibold'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <MessageSquare className="w-3 h-3 text-emerald-600" />
-              WhatsApp ({totalWhatsApp})
-            </button>
-            <button
-              onClick={() => setSelectedChannel('email')}
-              className={`px-3 py-1.5 rounded-md flex items-center gap-1 transition-colors ${
-                selectedChannel === 'email'
-                  ? 'bg-white text-blue-700 shadow-xs font-semibold'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <Mail className="w-3 h-3 text-blue-600" />
-              Email ({totalEmail})
-            </button>
+        <div className="flex flex-wrap items-center gap-3 w-full lg:w-auto">
+          {/* Department Filter for Super Admin & HR */}
+          {isSuperAdminOrHR && (
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs font-medium text-slate-500 hidden sm:inline flex items-center gap-1">
+                <Building className="w-3.5 h-3.5" /> Dept:
+              </span>
+              <select
+                value={selectedDepartment}
+                onChange={(e) => setSelectedDepartment(e.target.value)}
+                className="text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white text-slate-700 focus:outline-hidden focus:ring-1 focus:ring-blue-500 font-medium"
+              >
+                <option value="all">All Departments</option>
+                {appDepartments.map((d) => (
+                  <option key={d.id} value={d.name}>
+                    {d.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {/* Channel selector */}
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-medium text-slate-500 hidden sm:inline flex items-center gap-1">
+              <Filter className="w-3.5 h-3.5" /> Channel:
+            </span>
+            <div className="inline-flex p-1 bg-slate-100 rounded-lg text-xs font-medium">
+              <button
+                onClick={() => setSelectedChannel('all')}
+                className={`px-3 py-1.5 rounded-md transition-colors ${
+                  selectedChannel === 'all'
+                    ? 'bg-white text-slate-900 shadow-xs font-semibold'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                All ({visibleNotifications.length})
+              </button>
+              <button
+                onClick={() => setSelectedChannel('whatsapp')}
+                className={`px-3 py-1.5 rounded-md flex items-center gap-1 transition-colors ${
+                  selectedChannel === 'whatsapp'
+                    ? 'bg-white text-emerald-700 shadow-xs font-semibold'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <MessageSquare className="w-3 h-3 text-emerald-600" />
+                WhatsApp ({totalWhatsApp})
+              </button>
+              <button
+                onClick={() => setSelectedChannel('email')}
+                className={`px-3 py-1.5 rounded-md flex items-center gap-1 transition-colors ${
+                  selectedChannel === 'email'
+                    ? 'bg-white text-blue-700 shadow-xs font-semibold'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Mail className="w-3 h-3 text-blue-600" />
+                Email ({totalEmail})
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -285,23 +413,49 @@ export const NotificationDispatchCenter: React.FC = () => {
         {filtered.length === 0 ? (
           <div className="bg-white rounded-xl border border-slate-200 p-12 text-center">
             <MessageSquare className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-            <h3 className="text-base font-bold text-slate-700">No Dispatched Notifications Found</h3>
-            <p className="text-xs text-slate-500 mt-1 max-w-md mx-auto">
-              When faculty members submit leaves, or when admins approve or reject requests, automated
-              confirmations and acknowledgements appear here.
+            <h3 className="text-base font-bold text-slate-700">
+              {isStaff
+                ? 'No Personal Notifications Found'
+                : isManager
+                ? `No Notifications for ${currentUser.department}`
+                : 'No Dispatched Notifications Found'}
+            </h3>
+            <p className="text-xs text-slate-500 mt-1 max-w-md mx-auto leading-relaxed">
+              {isStaff ? (
+                <>
+                  When you submit leave requests, or when department managers approve or reject your
+                  applications, official automated confirmation receipts will appear here.
+                </>
+              ) : isManager ? (
+                <>
+                  When faculty members in {currentUser.department} submit leave requests or receive approvals,
+                  automated WhatsApp and Email delivery logs will appear here.
+                </>
+              ) : (
+                <>
+                  When faculty members submit leaves, or when admins approve or reject requests, automated
+                  confirmations and acknowledgements appear here.
+                </>
+              )}
             </p>
-            <button
-              onClick={() => setIsComposerOpen(true)}
-              className="mt-4 px-4 py-2 bg-blue-600 text-white text-xs font-semibold rounded-lg shadow-xs hover:bg-blue-700"
-            >
-              Send First Notification
-            </button>
+            {!isStaff && (
+              <button
+                onClick={handleOpenComposer}
+                className="mt-4 px-4 py-2 bg-blue-600 text-white text-xs font-semibold rounded-lg shadow-xs hover:bg-blue-700"
+              >
+                Send Notification
+              </button>
+            )}
           </div>
         ) : (
           filtered.map((item) => {
             const isWhatsApp = item.channel === 'whatsapp' || item.channel === 'both';
             const cleanPhone = item.recipientPhone ? formatWhatsAppPhone(item.recipientPhone) : '';
             const waUrl = item.whatsappUrl || (cleanPhone ? buildWhatsAppDirectUrl(item.recipientPhone!, item.message) : '');
+            const isAddressedToMe =
+              Boolean(item.metadata?.staffId && item.metadata.staffId === currentUser.id) ||
+              Boolean(item.recipientEmail && item.recipientEmail.toLowerCase() === currentUser.email.toLowerCase()) ||
+              Boolean(item.recipientName && item.recipientName.toLowerCase() === currentUser.name.toLowerCase());
 
             return (
               <div
@@ -328,6 +482,19 @@ export const NotificationDispatchCenter: React.FC = () => {
                       <CheckCircle2 className="w-3 h-3 text-emerald-500" />
                       Dispatched
                     </span>
+
+                    {/* Personal / Department ownership badge */}
+                    {isAddressedToMe ? (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10.5px] font-semibold bg-blue-50 text-blue-700 border border-blue-200">
+                        <User className="w-3 h-3 text-blue-600" />
+                        Personal Notice
+                      </span>
+                    ) : item.metadata?.department ? (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10.5px] font-medium bg-slate-100 text-slate-600">
+                        <Building className="w-3 h-3 text-slate-500" />
+                        {item.metadata.department}
+                      </span>
+                    ) : null}
 
                     <span className="text-[11px] text-slate-400 flex items-center gap-1">
                       <Clock className="w-3 h-3" />
@@ -358,6 +525,11 @@ export const NotificationDispatchCenter: React.FC = () => {
                       <span className="flex items-center gap-1 text-[11px]">
                         <Mail className="w-3 h-3 text-blue-600" />
                         {item.recipientEmail}
+                      </span>
+                    )}
+                    {item.metadata?.department && (
+                      <span className="flex items-center gap-1 text-[11px] text-slate-400">
+                        • {item.metadata.department}
                       </span>
                     )}
                   </div>
@@ -421,8 +593,8 @@ export const NotificationDispatchCenter: React.FC = () => {
         )}
       </div>
 
-      {/* Dispatch Custom Alert Modal / Drawer */}
-      {isComposerOpen && (
+      {/* Dispatch Custom Alert Modal / Drawer (Super Admin, HR, Manager) */}
+      {!isStaff && isComposerOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 overflow-y-auto">
           <div className="bg-white rounded-2xl max-w-xl w-full p-6 shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95 duration-150 my-8">
             <div className="flex items-center justify-between border-b border-slate-100 pb-4 mb-4">
@@ -432,10 +604,14 @@ export const NotificationDispatchCenter: React.FC = () => {
                 </div>
                 <div>
                   <h3 className="text-base font-bold text-slate-900">
-                    Dispatch Notification (Email & WhatsApp)
+                    {isManager
+                      ? `Dispatch ${currentUser.department} Department Alert`
+                      : 'Dispatch Notification (Email & WhatsApp)'}
                   </h3>
                   <p className="text-xs text-slate-500">
-                    Send real-time confirmation or acknowledgement to faculty
+                    {isManager
+                      ? `Send real-time notice to staff members in ${currentUser.department}`
+                      : 'Send real-time confirmation or acknowledgement to faculty'}
                   </p>
                 </div>
               </div>
@@ -451,14 +627,14 @@ export const NotificationDispatchCenter: React.FC = () => {
               {/* Recipient Selector */}
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Recipient Staff Member
+                  Recipient Staff Member {isManager && `(${currentUser.department})`}
                 </label>
                 <select
                   value={targetStaffId}
                   onChange={(e) => setTargetStaffId(e.target.value)}
                   className="w-full px-3 py-2 text-xs rounded-lg border border-slate-200 bg-white text-slate-900 focus:ring-2 focus:ring-blue-500"
                 >
-                  {staffList.map((s) => (
+                  {availableTargetStaff.map((s) => (
                     <option key={s.id} value={s.id}>
                       {s.name} ({s.department} • {s.role}) — {s.phone}
                     </option>

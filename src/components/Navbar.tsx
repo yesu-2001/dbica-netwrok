@@ -30,8 +30,18 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenMobileMenu, onOpenApplyMod
           : 'Organization-wide leave review & authorization center',
     },
     notifications: {
-      title: 'Multi-Channel Notification & Dispatch Center',
-      subtitle: 'Real-time WhatsApp and Email delivery logs, instant acknowledgement, and direct dispatch',
+      title:
+        currentUser.role === 'Staff'
+          ? 'My Notifications & Delivery Receipts'
+          : currentUser.role === 'Manager'
+          ? `Department Notification & Dispatch Center (${currentUser.department})`
+          : 'Multi-Channel Notification & Dispatch Center',
+      subtitle:
+        currentUser.role === 'Staff'
+          ? `Official Email and WhatsApp confirmations sent to ${currentUser.name}`
+          : currentUser.role === 'Manager'
+          ? `Live delivery logs and dispatch for ${currentUser.department} staff`
+          : 'Real-time WhatsApp and Email delivery logs, instant acknowledgement, and direct dispatch',
     },
     staff: {
       title: 'Staff Directory & Roster Management',

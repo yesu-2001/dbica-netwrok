@@ -124,6 +124,7 @@ export interface DispatchedNotification {
   whatsappUrl?: string;
   metadata?: {
     requestId?: string;
+    staffId?: string;
     staffName?: string;
     department?: string;
     leaveType?: string;
@@ -132,6 +133,9 @@ export interface DispatchedNotification {
     totalDays?: number;
     actionedBy?: string;
     rejectionReason?: string;
+    senderId?: string;
+    senderName?: string;
+    senderRole?: string;
   };
 }
 

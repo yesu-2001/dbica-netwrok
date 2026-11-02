@@ -47,6 +47,31 @@ export const Sidebar: React.FC = () => {
     (req) => req.staffId === currentUser.id && req.status === 'Pending'
   ).length;
 
+  // Role-scoped notifications count
+  const relevantNotificationsCount = dispatchedNotifications.filter((n) => {
+    if (currentUser.role === 'Super Admin' || currentUser.role === 'HR') return true;
+    if (currentUser.role === 'Manager') {
+      const isDept = n.metadata?.department === currentUser.department;
+      const isMe =
+        (n.metadata?.staffId && n.metadata.staffId === currentUser.id) ||
+        (n.recipientEmail && n.recipientEmail.toLowerCase() === currentUser.email.toLowerCase()) ||
+        (n.recipientName && n.recipientName.toLowerCase() === currentUser.name.toLowerCase());
+      const isSender = n.metadata?.senderId === currentUser.id;
+      return isDept || isMe || isSender;
+    }
+    // Staff: Strictly their own notifications
+    return (
+      (n.metadata?.staffId && n.metadata.staffId === currentUser.id) ||
+      (n.recipientEmail && n.recipientEmail.toLowerCase() === currentUser.email.toLowerCase()) ||
+      (n.recipientName && n.recipientName.toLowerCase() === currentUser.name.toLowerCase()) ||
+      (n.recipientPhone &&
+        currentUser.phone &&
+        n.recipientPhone.replace(/\D/g, '').length >= 10 &&
+        currentUser.phone.replace(/\D/g, '').length >= 10 &&
+        n.recipientPhone.replace(/\D/g, '').slice(-10) === currentUser.phone.replace(/\D/g, '').slice(-10))
+    );
+  }).length;
+
   const canReviewLeaves = currentUser.role !== 'Staff';
   const canManageStaff = currentUser.role === 'Super Admin' || currentUser.role === 'HR';
   const canViewAnalytics = currentUser.role === 'Super Admin' || currentUser.role === 'HR';
@@ -89,12 +114,22 @@ export const Sidebar: React.FC = () => {
     },
     {
       id: 'notifications',
-      label: 'Dispatch Center (WhatsApp & Email)',
+      label:
+        currentUser.role === 'Staff'
+          ? 'My Notifications'
+          : currentUser.role === 'Manager'
+          ? 'Department Dispatches'
+          : 'Dispatch Center (WhatsApp & Email)',
       icon: <Send className="w-4 h-4 text-emerald-400" />,
-      badge: dispatchedNotifications.length > 0 ? dispatchedNotifications.length : undefined,
+      badge: relevantNotificationsCount > 0 ? relevantNotificationsCount : undefined,
       badgeColor: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30 font-bold',
       visible: true,
-      description: 'Live delivery logs & direct messaging',
+      description:
+        currentUser.role === 'Staff'
+          ? 'Personal WhatsApp & Email receipts'
+          : currentUser.role === 'Manager'
+          ? `${currentUser.department} alerts & receipts`
+          : 'Live delivery logs & direct messaging',
     },
     {
       id: 'staff',
