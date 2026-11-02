@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { AppProvider, useApp } from './context/AppContext';
 import { LeaveType } from './types';
-import { QuickRoleSwitcher } from './components/QuickRoleSwitcher';
 import { Sidebar } from './components/Sidebar';
 import { Navbar } from './components/Navbar';
 import { OverviewView } from './components/OverviewView';
@@ -53,9 +52,6 @@ const MainLayout: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col text-slate-900 font-sans selection:bg-blue-100 selection:text-blue-900">
-      {/* Floating Quick Role Switcher */}
-      <QuickRoleSwitcher />
-
       {/* Main Shell Layout */}
       <div className="flex-1 flex overflow-hidden">
         {/* Desktop Sidebar */}

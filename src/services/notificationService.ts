@@ -449,6 +449,33 @@ class NotificationDispatchService {
     await this.recordAndDispatch(notif);
     return notif;
   }
+
+  /**
+   * Dispatch custom notification with structured options object
+   */
+  public async dispatchCustomNotification(options: {
+    recipientName: string;
+    email: string;
+    phone?: string;
+    channel?: NotificationChannel;
+    subject: string;
+    message: string;
+    targetStaffId?: string;
+    department?: string;
+  }): Promise<DispatchedNotification> {
+    return this.dispatchCustom(
+      options.recipientName,
+      options.phone || '',
+      options.email,
+      options.channel || 'both',
+      options.subject,
+      options.message,
+      {
+        staffId: options.targetStaffId,
+        department: options.department,
+      }
+    );
+  }
 }
 
 export const notificationService = new NotificationDispatchService();
