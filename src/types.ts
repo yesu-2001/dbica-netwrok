@@ -45,10 +45,19 @@ export interface StaffMember {
   leaveBalance: LeaveBalance;
   leaveThresholds?: LeaveBalance;
   status: 'Active' | 'Inactive';
+  accountStatus?: 'active' | 'invited' | 'suspended';
+  activationToken?: string; // High-entropy one-time token for first-time password initialization
+  activationExpiresAt?: string; // ISO date for token expiration (7 days)
+  activatedAt?: string; // ISO date when staff claimed their account and set their password
+  resetToken?: string; // One-time token for forgotten password recovery
+  resetExpiresAt?: string; // ISO date for reset token expiration
+  lastLoginAt?: string;
+  failedLoginAttempts?: number;
+  lockoutUntil?: string;
   joinedDate: string;
   avatarBg?: string;
   reportingTo?: string; // Staff ID of manager/director
-  portalPassword?: string; // Backend-stored authentication password
+  portalPassword?: string; // Encrypted or stored portal authentication password set securely by the employee
 }
 
 export interface LeaveRequest {

@@ -15,6 +15,13 @@ import {
   Building,
   Mail,
   Phone,
+  Key,
+  ShieldAlert,
+  Copy,
+  ExternalLink,
+  RefreshCw,
+  Send,
+  Check,
 } from 'lucide-react';
 import { StaffMember, Role, Department } from '../types';
 
@@ -28,9 +35,13 @@ export const StaffManagementView: React.FC = () => {
     updateStaffLeaveThresholds,
     deleteStaff,
     toggleStaffStatus,
+    resendActivationInvite,
+    toggleStaffSuspension,
+    requestPasswordReset,
     departments: appDepartments,
     globalThresholds,
     setActiveTab,
+    addToast,
   } = useApp();
 
   const [searchTerm, setSearchTerm] = useState('');
@@ -42,6 +53,13 @@ export const StaffManagementView: React.FC = () => {
   const [editingStaff, setEditingStaff] = useState<StaffMember | null>(null);
   const [balanceStaff, setBalanceStaff] = useState<StaffMember | null>(null);
   const [deletingStaff, setDeletingStaff] = useState<StaffMember | null>(null);
+  const [invitationModalData, setInvitationModalData] = useState<{
+    staff: StaffMember;
+    token: string;
+    link: string;
+  } | null>(null);
+  const [copiedToken, setCopiedToken] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
 
   // Form states
   const [formName, setFormName] = useState('');
@@ -140,10 +158,42 @@ export const StaffManagementView: React.FC = () => {
       joinedDate: new Date().toISOString().split('T')[0],
     });
 
-    if (res.success) {
+    if (res.success && res.newStaff && res.activationLink) {
+      setIsAddModalOpen(false);
+      setInvitationModalData({
+        staff: res.newStaff,
+        token: res.activationToken || res.newStaff.activationToken || '',
+        link: res.activationLink,
+      });
+      setCopiedLink(false);
+      setCopiedToken(false);
+    } else if (res.success) {
       setIsAddModalOpen(false);
     } else {
       setFormError(res.error || 'Failed to add staff member.');
+    }
+  };
+
+  // Open or Resend Onboarding Invitation Modal
+  const handleOpenInviteModal = (staff: StaffMember) => {
+    setCopiedLink(false);
+    setCopiedToken(false);
+    if (staff.activationToken) {
+      const link = `${window.location.origin}/#activate?token=${staff.activationToken}&email=${encodeURIComponent(staff.email)}`;
+      setInvitationModalData({
+        staff,
+        token: staff.activationToken,
+        link,
+      });
+    } else {
+      const res = resendActivationInvite(staff.id);
+      if (res.success && res.inviteLink && res.token) {
+        setInvitationModalData({
+          staff,
+          token: res.token,
+          link: res.inviteLink,
+        });
+      }
     }
   };
 
@@ -387,27 +437,91 @@ export const StaffManagementView: React.FC = () => {
                       </div>
                     </td>
 
-                    {/* Status */}
+                    {/* Status & Account Security */}
                     <td className="py-3.5 px-4">
-                      <button
-                        onClick={() => toggleStaffStatus(staff.id)}
-                        disabled={staff.role === 'Super Admin' && !isSuperAdmin}
-                        className={`text-[10px] px-2.5 py-0.5 rounded-full font-bold border transition-colors ${
-                          staff.status === 'Active'
-                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
-                            : 'bg-slate-100 text-slate-500 border-slate-200 hover:bg-slate-200'
-                        }`}
-                        title="Click to toggle status"
-                      >
-                        {staff.status}
-                      </button>
+                      {staff.accountStatus === 'invited' ? (
+                        <button
+                          type="button"
+                          onClick={() => handleOpenInviteModal(staff)}
+                          className="text-[10.5px] px-2.5 py-1 rounded-full font-bold bg-amber-50 text-amber-800 border border-amber-300 hover:bg-amber-100 transition-colors inline-flex items-center gap-1 cursor-pointer"
+                          title="Click to view one-time activation token and invite link"
+                        >
+                          <Key className="w-3 h-3 text-amber-600" />
+                          <span>Invited (Pending Setup)</span>
+                        </button>
+                      ) : staff.accountStatus === 'suspended' || staff.status === 'Inactive' ? (
+                        <span
+                          className="text-[10.5px] px-2.5 py-1 rounded-full font-bold bg-rose-50 text-rose-700 border border-rose-200 inline-flex items-center gap-1"
+                          title="Account suspended by administration for security"
+                        >
+                          <ShieldAlert className="w-3 h-3 text-rose-600" />
+                          <span>Suspended</span>
+                        </span>
+                      ) : (
+                        <span
+                          className="text-[10.5px] px-2.5 py-1 rounded-full font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 inline-flex items-center gap-1"
+                          title="Active staff account with established password"
+                        >
+                          <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                          <span>Active</span>
+                        </span>
+                      )}
                     </td>
 
                     {/* Actions */}
                     <td className="py-3.5 px-4 text-right">
                       <div className="flex items-center justify-end gap-1.5">
+                        {/* If invited, show Invite Link & Token modal trigger */}
+                        {staff.accountStatus === 'invited' && (
+                          <button
+                            type="button"
+                            onClick={() => handleOpenInviteModal(staff)}
+                            className="p-1.5 text-amber-600 hover:text-amber-800 hover:bg-amber-50 rounded-lg transition-colors cursor-pointer"
+                            title="View One-Time Activation Token & Onboarding Link"
+                          >
+                            <Key className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+
+                        {/* Super Admin Safeguard: Suspend / Reactivate */}
+                        {isSuperAdmin && staff.id !== currentUser.id && staff.role !== 'Super Admin' && (
+                          <button
+                            type="button"
+                            onClick={() => toggleStaffSuspension(staff.id)}
+                            className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
+                              staff.accountStatus === 'suspended'
+                                ? 'text-emerald-600 hover:bg-emerald-50'
+                                : 'text-slate-400 hover:text-rose-600 hover:bg-rose-50'
+                            }`}
+                            title={
+                              staff.accountStatus === 'suspended'
+                                ? 'Reactivate Staff Portal Access'
+                                : 'Suspend Staff Account for Safeguarding'
+                            }
+                          >
+                            {staff.accountStatus === 'suspended' ? (
+                              <ShieldCheck className="w-3.5 h-3.5" />
+                            ) : (
+                              <ShieldAlert className="w-3.5 h-3.5" />
+                            )}
+                          </button>
+                        )}
+
+                        {/* Super Admin/HR: Issue Self-Service Password Reset Token */}
+                        {(isSuperAdmin || isHR) && staff.accountStatus !== 'invited' && (
+                          <button
+                            type="button"
+                            onClick={() => requestPasswordReset(staff.email)}
+                            className="p-1.5 text-slate-400 hover:text-sky-600 hover:bg-sky-50 rounded-lg transition-colors cursor-pointer"
+                            title="Generate & Dispatch Password Recovery Token to Employee"
+                          >
+                            <RefreshCw className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+
                         {/* Adjust Balance & Thresholds */}
                         <button
+                          type="button"
                           onClick={() => {
                             setBalanceStaff(staff);
                             const q = staff.leaveThresholds || {
@@ -424,7 +538,7 @@ export const StaffManagementView: React.FC = () => {
                             setFormEarned(staff.leaveBalance.compensatory ?? staff.leaveBalance.earned);
                             setFormThresholdReason('');
                           }}
-                          className="p-1.5 text-slate-600 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                          className="p-1.5 text-slate-600 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
                           title="Adjust Leave Quotas & Balances"
                         >
                           <Sliders className="w-3.5 h-3.5" />
@@ -432,8 +546,9 @@ export const StaffManagementView: React.FC = () => {
 
                         {/* Edit Profile */}
                         <button
+                          type="button"
                           onClick={() => openEditModal(staff)}
-                          className="p-1.5 text-slate-600 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                          className="p-1.5 text-slate-600 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
                           title="Edit Staff Information"
                         >
                           <Edit2 className="w-3.5 h-3.5" />
@@ -442,9 +557,10 @@ export const StaffManagementView: React.FC = () => {
                         {/* Delete Profile - Strictly Super Admin Only */}
                         {isSuperAdmin && (
                           <button
+                            type="button"
                             onClick={() => setDeletingStaff(staff)}
                             disabled={staff.role === 'Super Admin' && staffList.filter((s) => s.role === 'Super Admin').length <= 1}
-                            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-slate-400"
+                            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-slate-400 cursor-pointer"
                             title={
                               staff.role === 'Super Admin' && staffList.filter((s) => s.role === 'Super Admin').length <= 1
                                 ? 'Cannot delete the sole Super Admin'
@@ -486,6 +602,17 @@ export const StaffManagementView: React.FC = () => {
                 {formError}
               </div>
             )}
+
+            {/* Zero-Trust Safeguard Notice */}
+            <div className="mt-3 p-3 bg-sky-50 border border-sky-200 rounded-xl text-left text-xs text-sky-950 flex items-start gap-2.5">
+              <ShieldCheck className="w-4 h-4 text-sky-600 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-bold text-sky-900">Zero-Trust Credential Security Policy</p>
+                <p className="text-[11px] text-sky-800 leading-relaxed mt-0.5">
+                  Super Admin cannot assign or create passwords for employees. Submitting will generate a secure one-time activation token and invitation link allowing the staff member to set their own confidential password.
+                </p>
+              </div>
+            </div>
 
             <form onSubmit={handleAddSubmit} className="mt-4 space-y-3.5 text-xs">
               <div>
@@ -617,12 +744,132 @@ export const StaffManagementView: React.FC = () => {
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow-sm shadow-blue-600/30"
+                  className="px-4 py-2 font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow-sm shadow-blue-600/30 flex items-center gap-1.5 cursor-pointer"
                 >
-                  Save Staff Member
+                  <UserPlus className="w-4 h-4" />
+                  <span>Onboard &amp; Issue Activation Invite</span>
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Onboarding Invitation Modal (Staff First-Time Account Setup) */}
+      {invitationModalData && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 backdrop-blur-xs p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95 my-8 text-left">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2 text-amber-600">
+                <Key className="w-5 h-5" />
+                <h3 className="text-base font-bold text-slate-900">Onboarding Invitation &amp; Token</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setInvitationModalData(null)}
+                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="mt-4 space-y-4 text-xs text-slate-700">
+              <div className="p-3 bg-amber-50/80 border border-amber-200 rounded-xl">
+                <p className="font-semibold text-amber-900">
+                  Staff Profile Created: {invitationModalData.staff.name}
+                </p>
+                <p className="text-[11.5px] text-amber-800 mt-0.5">
+                  {invitationModalData.staff.email} • {invitationModalData.staff.role} ({invitationModalData.staff.department})
+                </p>
+              </div>
+
+              {/* Safeguarding Explanation */}
+              <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-1">
+                <div className="flex items-center gap-1.5 font-bold text-slate-800">
+                  <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                  <span>Why isn't a password created by Admin?</span>
+                </div>
+                <p className="text-[11px] text-slate-600 leading-relaxed">
+                  In compliance with enterprise security and non-repudiation safeguarding, administrators should never hold or transmit employee passwords. Instead, share this one-time activation link or token so the employee sets their own private password.
+                </p>
+              </div>
+
+              {/* Activation Token */}
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">
+                  One-Time Activation Token (Valid 7 days)
+                </label>
+                <div className="flex items-center gap-2">
+                  <div className="flex-1 px-3 py-2 bg-slate-100 rounded-xl font-mono text-sm font-bold text-slate-900 border border-slate-200 select-all">
+                    {invitationModalData.token}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(invitationModalData.token);
+                      setCopiedToken(true);
+                      setTimeout(() => setCopiedToken(false), 2000);
+                      addToast('Token Copied', 'Activation token copied to clipboard', 'success');
+                    }}
+                    className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-medium flex items-center gap-1 cursor-pointer"
+                  >
+                    {copiedToken ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span>{copiedToken ? 'Copied' : 'Copy Token'}</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Full Activation Link */}
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">
+                  Direct Employee Onboarding Link
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    readOnly
+                    value={invitationModalData.link}
+                    className="flex-1 px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-600 select-all"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(invitationModalData.link);
+                      setCopiedLink(true);
+                      setTimeout(() => setCopiedLink(false), 2000);
+                      addToast('Link Copied', 'Onboarding invitation link copied to clipboard', 'success');
+                    }}
+                    className="px-3 py-2 rounded-xl bg-[#0F5C97] hover:bg-[#0c4b7b] text-white font-medium flex items-center gap-1 cursor-pointer"
+                  >
+                    {copiedLink ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span>{copiedLink ? 'Copied' : 'Copy Link'}</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Modal Actions */}
+              <div className="pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(invitationModalData.link);
+                    addToast('Activation Link Ready', 'Link copied! You can test it by logging out and opening the activation page.', 'info');
+                  }}
+                  className="px-3 py-2 rounded-xl border border-slate-200 text-slate-700 hover:bg-slate-50 font-medium text-xs flex items-center gap-1.5 cursor-pointer"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  <span>Copy &amp; Test Onboarding Flow</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setInvitationModalData(null)}
+                  className="px-4 py-2 rounded-xl bg-slate-900 text-white font-semibold text-xs hover:bg-slate-800 cursor-pointer"
+                >
+                  Done
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

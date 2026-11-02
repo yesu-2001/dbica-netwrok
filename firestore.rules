@@ -13,7 +13,8 @@ service cloud.firestore {
         && data.email is string && data.email.size() > 0 && data.email.size() <= 150
         && data.role is string && data.role in ['Super Admin', 'HR', 'Manager', 'Staff']
         && data.department is string && data.department.size() > 0
-        && (!('status' in data) || data.status in ['Active', 'Inactive'])
+        && (!('status' in data) || data.status in ['Active', 'Inactive', 'Suspended'])
+        && (!('accountStatus' in data) || data.accountStatus in ['active', 'invited', 'suspended', 'Active', 'Invited', 'Suspended'])
         && (!('portalPassword' in data) || (data.portalPassword is string && data.portalPassword.size() <= 128));
     }
 

@@ -68,6 +68,7 @@ export const INITIAL_STAFF_MEMBERS: StaffMember[] = [
     leaveBalance: { casual: 12, sick: 10, compensatory: 20, earned: 20 },
     portalPassword: 'dbica@2026',
     status: 'Active',
+    accountStatus: 'active',
     joinedDate: '2018-06-01',
     avatarBg: 'bg-amber-600',
   },
