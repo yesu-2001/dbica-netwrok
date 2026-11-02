@@ -9,6 +9,8 @@ import {
   query,
   orderBy,
   limit,
+  onSnapshot,
+  Unsubscribe,
 } from 'firebase/firestore';
 import { db, COLLECTIONS } from '../lib/firebase';
 import {
@@ -160,12 +162,128 @@ export class FirestoreService {
     }
   }
 
-  // --- Staff Operations ---
+  // --- Real-time Listeners (onSnapshot) ---
+
+  subscribeStaff(
+    onData: (staff: StaffMember[]) => void,
+    onError?: (err: any) => void
+  ): Unsubscribe {
+    return onSnapshot(
+      collection(db, COLLECTIONS.STAFF),
+      (snap) => {
+        const staff = snap.docs.map((d) => d.data() as StaffMember);
+        onData(staff);
+      },
+      (err) => {
+        console.warn('[Firestore] Staff snapshot error:', err);
+        onError?.(err);
+      }
+    );
+  }
+
+  subscribeLeaveRequests(
+    onData: (requests: LeaveRequest[]) => void,
+    onError?: (err: any) => void
+  ): Unsubscribe {
+    return onSnapshot(
+      collection(db, COLLECTIONS.LEAVE_REQUESTS),
+      (snap) => {
+        const requests = snap.docs.map((d) => d.data() as LeaveRequest);
+        onData(requests);
+      },
+      (err) => {
+        console.warn('[Firestore] Leave requests snapshot error:', err);
+        onError?.(err);
+      }
+    );
+  }
+
+  subscribeDepartments(
+    onData: (depts: DepartmentItem[]) => void,
+    onError?: (err: any) => void
+  ): Unsubscribe {
+    return onSnapshot(
+      collection(db, COLLECTIONS.DEPARTMENTS),
+      (snap) => {
+        const depts = snap.docs.map((d) => d.data() as DepartmentItem);
+        onData(depts);
+      },
+      (err) => {
+        console.warn('[Firestore] Departments snapshot error:', err);
+        onError?.(err);
+      }
+    );
+  }
+
+  subscribeSettings(
+    onData: (settings: GlobalLeaveThresholds) => void,
+    onError?: (err: any) => void
+  ): Unsubscribe {
+    return onSnapshot(
+      doc(db, COLLECTIONS.SETTINGS, 'globalThresholds'),
+      (snap) => {
+        if (snap.exists()) {
+          onData(snap.data() as GlobalLeaveThresholds);
+        }
+      },
+      (err) => {
+        console.warn('[Firestore] Settings snapshot error:', err);
+        onError?.(err);
+      }
+    );
+  }
+
+  subscribeAuditLogs(
+    onData: (logs: AuditLog[]) => void,
+    onError?: (err: any) => void
+  ): Unsubscribe {
+    const q = query(
+      collection(db, COLLECTIONS.AUDIT_LOGS),
+      orderBy('timestamp', 'desc'),
+      limit(150)
+    );
+    return onSnapshot(
+      q,
+      (snap) => {
+        const logs = snap.docs.map((d) => d.data() as AuditLog);
+        onData(logs);
+      },
+      (err) => {
+        console.warn('[Firestore] Audit logs snapshot error:', err);
+        onError?.(err);
+      }
+    );
+  }
+
+  subscribeNotifications(
+    onData: (notifs: DispatchedNotification[]) => void,
+    onError?: (err: any) => void
+  ): Unsubscribe {
+    const q = query(
+      collection(db, COLLECTIONS.NOTIFICATIONS),
+      orderBy('timestamp', 'desc'),
+      limit(100)
+    );
+    return onSnapshot(
+      q,
+      (snap) => {
+        const notifs = snap.docs.map((d) => d.data() as DispatchedNotification);
+        onData(notifs);
+      },
+      (err) => {
+        console.warn('[Firestore] Notifications snapshot error:', err);
+        onError?.(err);
+      }
+    );
+  }
+
+  // --- Staff Operations (CRUD) ---
 
   async upsertStaff(staff: StaffMember): Promise<boolean> {
     try {
       const cleanStaff = sanitizeForFirestore(staff);
       await setDoc(doc(db, COLLECTIONS.STAFF, staff.id), cleanStaff);
+      console.info(`[Firestore] Saved staff record "${staff.name}" (${staff.id}) to Cloud Firestore.`);
       return true;
     } catch (error) {
       console.error('[Firestore] Error saving staff:', error);
@@ -177,6 +295,7 @@ export class FirestoreService {
     try {
       const cleanFields = sanitizeForFirestore(fields);
       await updateDoc(doc(db, COLLECTIONS.STAFF, staffId), cleanFields);
+      console.info(`[Firestore] Updated staff fields for ID "${staffId}" in Cloud Firestore.`);
       return true;
     } catch (error) {
       console.error('[Firestore] Error updating staff:', error);
@@ -187,6 +306,7 @@ export class FirestoreService {
   async deleteStaff(staffId: string): Promise<boolean> {
     try {
       await deleteDoc(doc(db, COLLECTIONS.STAFF, staffId));
+      console.info(`[Firestore] Deleted staff ID "${staffId}" from Cloud Firestore.`);
       return true;
     } catch (error) {
       console.error('[Firestore] Error deleting staff:', error);
@@ -194,12 +314,13 @@ export class FirestoreService {
     }
   }
 
-  // --- Leave Request Operations ---
+  // --- Leave Request Operations (CRUD) ---
 
   async saveLeaveRequest(request: LeaveRequest): Promise<boolean> {
     try {
       const cleanReq = sanitizeForFirestore(request);
       await setDoc(doc(db, COLLECTIONS.LEAVE_REQUESTS, request.id), cleanReq);
+      console.info(`[Firestore] Saved leave request #${request.id} for "${request.staffName}" to Cloud Firestore.`);
       return true;
     } catch (error) {
       console.error('[Firestore] Error saving leave request:', error);
@@ -211,6 +332,7 @@ export class FirestoreService {
     try {
       const cleanUpdates = sanitizeForFirestore(updates);
       await updateDoc(doc(db, COLLECTIONS.LEAVE_REQUESTS, requestId), cleanUpdates);
+      console.info(`[Firestore] Updated leave request #${requestId} in Cloud Firestore.`);
       return true;
     } catch (error) {
       console.error('[Firestore] Error updating leave request:', error);
@@ -218,13 +340,13 @@ export class FirestoreService {
     }
   }
 
-  // --- Department Operations ---
+  // --- Department Operations (CRUD) ---
 
   async saveDepartment(department: DepartmentItem): Promise<boolean> {
     try {
       const cleanDept = sanitizeForFirestore(department);
       await setDoc(doc(db, COLLECTIONS.DEPARTMENTS, department.id), cleanDept);
-      console.info(`[Firestore] Successfully saved department "${department.name}" (${department.id})`);
+      console.info(`[Firestore] Saved department "${department.name}" (${department.id}) to Cloud Firestore.`);
       return true;
     } catch (error) {
       console.error('[Firestore] Error saving department:', error);
@@ -235,7 +357,7 @@ export class FirestoreService {
   async deleteDepartment(deptId: string): Promise<boolean> {
     try {
       await deleteDoc(doc(db, COLLECTIONS.DEPARTMENTS, deptId));
-      console.info(`[Firestore] Successfully deleted department ${deptId}`);
+      console.info(`[Firestore] Deleted department ${deptId} from Cloud Firestore.`);
       return true;
     } catch (error) {
       console.error('[Firestore] Error deleting department:', error);
@@ -243,12 +365,13 @@ export class FirestoreService {
     }
   }
 
-  // --- Settings Operations ---
+  // --- Settings Operations (CRUD) ---
 
   async saveGlobalSettings(settings: GlobalLeaveThresholds): Promise<boolean> {
     try {
       const cleanSettings = sanitizeForFirestore(settings);
       await setDoc(doc(db, COLLECTIONS.SETTINGS, 'globalThresholds'), cleanSettings);
+      console.info('[Firestore] Saved global leave thresholds to Cloud Firestore.');
       return true;
     } catch (error) {
       console.error('[Firestore] Error saving global settings:', error);
@@ -256,7 +379,7 @@ export class FirestoreService {
     }
   }
 
-  // --- Audit Log Operations ---
+  // --- Audit Log Operations (CRUD) ---
 
   async saveAuditLog(log: AuditLog): Promise<boolean> {
     try {
@@ -269,11 +392,29 @@ export class FirestoreService {
     }
   }
 
-  // --- Notification Operations ---
+  // --- Notification Operations (CRUD) ---
 
   async saveNotification(notification: DispatchedNotification): Promise<boolean> {
     try {
-      const cleanNotif = sanitizeForFirestore(notification);
+      // Normalize status to strictly match firestore.rules ('Delivered', 'Sent', 'Failed', 'Pending')
+      let normalizedStatus: 'Delivered' | 'Sent' | 'Failed' | 'Pending' = 'Delivered';
+      const rawStatus = (notification.status || '').toLowerCase();
+      if (rawStatus === 'delivered' || rawStatus === 'dispatched') {
+        normalizedStatus = 'Delivered';
+      } else if (rawStatus === 'pending') {
+        normalizedStatus = 'Pending';
+      } else if (rawStatus === 'failed') {
+        normalizedStatus = 'Failed';
+      } else if (rawStatus === 'sent') {
+        normalizedStatus = 'Sent';
+      }
+
+      const notifToSave = {
+        ...notification,
+        status: normalizedStatus,
+      };
+
+      const cleanNotif = sanitizeForFirestore(notifToSave);
       await setDoc(doc(db, COLLECTIONS.NOTIFICATIONS, notification.id), cleanNotif);
       return true;
     } catch (error) {

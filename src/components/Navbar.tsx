@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
-import { Menu, PlusCircle, Calendar, ShieldCheck, Mail, LogOut } from 'lucide-react';
+import { Menu, PlusCircle, Calendar, ShieldCheck, Mail, LogOut, Cloud } from 'lucide-react';
 import { ActiveTab } from '../types';
 import { EmailLogModal } from './EmailLogModal';
 
@@ -10,7 +10,7 @@ interface NavbarProps {
 }
 
 export const Navbar: React.FC<NavbarProps> = ({ onOpenMobileMenu, onOpenApplyModal }) => {
-  const { currentUser, activeTab, emailHistory, logout } = useApp();
+  const { currentUser, activeTab, emailHistory, isCloudConnected, logout } = useApp();
   const [isEmailModalOpen, setIsEmailModalOpen] = useState(false);
 
   const tabTitles: Record<ActiveTab, { title: string; subtitle: string }> = {
@@ -97,6 +97,19 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenMobileMenu, onOpenApplyMod
 
         {/* Right action items */}
         <div className="flex items-center gap-3">
+          {/* Cloud Firestore Live Status */}
+          <div
+            className={`hidden sm:flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-lg border transition-colors ${
+              isCloudConnected
+                ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                : 'bg-amber-50 text-amber-700 border-amber-200 animate-pulse'
+            }`}
+            title={isCloudConnected ? 'Cloud Firestore database connected & synchronized in real time' : 'Connecting to Cloud Firestore...'}
+          >
+            <Cloud className={`w-3.5 h-3.5 ${isCloudConnected ? 'text-emerald-600' : 'text-amber-500'}`} />
+            <span>{isCloudConnected ? 'Cloud DB Active' : 'Connecting DB...'}</span>
+          </div>
+
           {/* Today indicator */}
           <div className="hidden lg:flex items-center gap-1.5 text-xs text-slate-600 bg-slate-100 px-3 py-1.5 rounded-lg font-medium border border-slate-200">
             <Calendar className="w-3.5 h-3.5 text-slate-500" />
