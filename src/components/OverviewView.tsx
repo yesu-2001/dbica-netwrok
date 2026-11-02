@@ -12,22 +12,26 @@ import {
   FileText,
   Building,
 } from 'lucide-react';
-import { formatDate, formatDateRange, doDateRangesOverlap } from '../utils/dateUtils';
+import { formatDate, formatDateRange, doDateRangesOverlap, getTodayDateString } from '../utils/dateUtils';
 import { Department } from '../types';
 
 export const OverviewView: React.FC<{ onApplyLeave: () => void }> = ({ onApplyLeave }) => {
   const { staffList, leaveRequests, currentUser, setActiveTab, departments: appDepartments } = useApp();
 
-  // Calendar month state - start around current demo date (September 2026)
-  const [currentMonthDate, setCurrentMonthDate] = useState(() => new Date(2026, 8, 1)); // Sept 2026
-  const [selectedCalendarDay, setSelectedCalendarDay] = useState<string>('2026-09-22');
+  // Real-time current date anchor (YYYY-MM-DD)
+  const todayStr = useMemo(() => getTodayDateString(), []);
+
+  // Calendar month state - synchronized in realtime to current month
+  const [currentMonthDate, setCurrentMonthDate] = useState(() => {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), 1);
+  });
+  const [selectedCalendarDay, setSelectedCalendarDay] = useState<string>(() => getTodayDateString());
   const [departmentFilter, setDepartmentFilter] = useState<string>('All');
 
   // Stats calculation
   const activeStaffCount = staffList.filter((s) => s.status === 'Active').length;
   const pendingRequestsCount = leaveRequests.filter((r) => r.status === 'Pending').length;
-
-  const todayStr = '2026-09-20'; // Current date anchor
 
   const onLeaveToday = leaveRequests.filter(
     (r) => r.status === 'Approved' && r.startDate <= todayStr && r.endDate >= todayStr
@@ -124,6 +128,12 @@ export const OverviewView: React.FC<{ onApplyLeave: () => void }> = ({ onApplyLe
 
   const handleNextMonth = () => {
     setCurrentMonthDate(new Date(year, month + 1, 1));
+  };
+
+  const handleGoToToday = () => {
+    const now = new Date();
+    setCurrentMonthDate(new Date(now.getFullYear(), now.getMonth(), 1));
+    setSelectedCalendarDay(getTodayDateString());
   };
 
   // Leaves for a particular day
@@ -264,18 +274,27 @@ export const OverviewView: React.FC<{ onApplyLeave: () => void }> = ({ onApplyLe
                 <CalendarIcon className="w-5 h-5 text-blue-600" />
                 <span>{monthLabel}</span>
               </h2>
-              <div className="flex items-center rounded-lg border border-slate-200 p-0.5 bg-slate-50">
+              <div className="flex items-center rounded-lg border border-slate-200 p-0.5 bg-slate-50 gap-0.5">
                 <button
                   onClick={handlePrevMonth}
                   className="p-1 text-slate-600 hover:text-slate-900 hover:bg-white rounded transition-colors"
                   aria-label="Previous Month"
+                  title="Previous Month"
                 >
                   <ChevronLeft className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={handleGoToToday}
+                  className="px-2 py-0.5 text-xs font-semibold text-blue-600 hover:text-blue-700 hover:bg-white rounded transition-colors"
+                  title="Jump to Today in Realtime"
+                >
+                  Today
                 </button>
                 <button
                   onClick={handleNextMonth}
                   className="p-1 text-slate-600 hover:text-slate-900 hover:bg-white rounded transition-colors"
                   aria-label="Next Month"
+                  title="Next Month"
                 >
                   <ChevronRight className="w-4 h-4" />
                 </button>

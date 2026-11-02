@@ -74,3 +74,11 @@ export function doDateRangesOverlap(start1: string, end1: string, start2: string
 
   return Math.max(s1, s2) <= Math.min(e1, e2);
 }
+
+export function getTodayDateString(d: Date = new Date()): string {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
