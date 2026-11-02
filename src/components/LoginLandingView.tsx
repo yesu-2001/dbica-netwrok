@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { DbicaLogo } from './DbicaLogo';
 import { Role } from '../types';
@@ -25,29 +25,118 @@ import {
   Users,
   Briefcase,
   UserCheck,
+  Key,
+  ShieldCheck,
+  Check,
+  RefreshCw,
+  Info,
 } from 'lucide-react';
 
-export const LoginLandingView: React.FC = () => {
-  const { login, loginAsRole, staffList } = useApp();
+// Password Security & Strength Evaluator
+function calculatePasswordStrength(pass: string): {
+  score: number;
+  label: 'Too Weak' | 'Weak' | 'Fair' | 'Strong';
+  color: string;
+  hasMinLength: boolean;
+  hasUpper: boolean;
+  hasLower: boolean;
+  hasNumberOrSpecial: boolean;
+} {
+  const hasMinLength = pass.length >= 8;
+  const hasUpper = /[A-Z]/.test(pass);
+  const hasLower = /[a-z]/.test(pass);
+  const hasNumberOrSpecial = /[0-9!@#$%^&*(),.?":{}|<>]/.test(pass);
 
-  // Form State
+  let score = 0;
+  if (hasMinLength) score++;
+  if (hasUpper) score++;
+  if (hasLower) score++;
+  if (hasNumberOrSpecial) score++;
+
+  let label: 'Too Weak' | 'Weak' | 'Fair' | 'Strong' = 'Too Weak';
+  let color = 'bg-rose-500';
+
+  if (score === 4) {
+    label = 'Strong';
+    color = 'bg-emerald-500';
+  } else if (score === 3) {
+    label = 'Fair';
+    color = 'bg-amber-500';
+  } else if (score >= 1) {
+    label = 'Weak';
+    color = 'bg-orange-500';
+  }
+
+  return { score, label, color, hasMinLength, hasUpper, hasLower, hasNumberOrSpecial };
+}
+
+export const LoginLandingView: React.FC = () => {
+  const {
+    login,
+    loginAsRole,
+    staffList,
+    activateAccount,
+    requestPasswordReset,
+    resetPasswordWithToken,
+  } = useApp();
+
+  // Primary Tab State
+  const [activeTab, setActiveTab] = useState<'form' | 'activate' | 'forgot' | 'presets'>('form');
+
+  // Sign In Form State
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(true);
+
+  // First-Time Account Activation State (Zero-Trust Employee Setup)
+  const [actEmail, setActEmail] = useState('');
+  const [actToken, setActToken] = useState('');
+  const [actNewPassword, setActNewPassword] = useState('');
+  const [actConfirmPassword, setActConfirmPassword] = useState('');
+  const [showActPassword, setShowActPassword] = useState(false);
+
+  // Forgot Password / Recovery State
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotStep, setForgotStep] = useState<1 | 2>(1);
+  const [resetTokenInput, setResetTokenInput] = useState('');
+  const [resetNewPassword, setResetNewPassword] = useState('');
+  const [resetConfirmPassword, setResetConfirmPassword] = useState('');
+  const [showResetPassword, setShowResetPassword] = useState(false);
+
+  // UI Feedback States
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [activeTab, setActiveTab] = useState<'form' | 'presets'>('form');
 
   // Modals
   const [showPolicyModal, setShowPolicyModal] = useState(false);
   const [showHelpModal, setShowHelpModal] = useState(false);
   const [showRosterModal, setShowRosterModal] = useState(false);
 
-  // Handle Form Submission
+  // Auto-detect URL activation parameter (#activate?token=...&email=...)
+  useEffect(() => {
+    try {
+      const hash = window.location.hash;
+      if (hash.includes('activate')) {
+        const queryPart = hash.includes('?') ? hash.split('?')[1] : '';
+        const params = new URLSearchParams(queryPart || window.location.search);
+        const token = params.get('token');
+        const email = params.get('email');
+        if (token) setActToken(token);
+        if (email) setActEmail(decodeURIComponent(email));
+        setActiveTab('activate');
+      }
+    } catch {
+      // URL parsing fallback
+    }
+  }, []);
+
+  // Handle Sign In Form Submission
   const handleFormSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
+    setSuccessMsg(null);
 
     if (!identifier.trim()) {
       setErrorMsg('Please enter your DBICA email address or Staff ID.');
@@ -64,7 +153,102 @@ export const LoginLandingView: React.FC = () => {
     }, 350);
   };
 
-  // Quick fill helper
+  // Handle First-Time Activation Submission
+  const handleActivationSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMsg(null);
+    setSuccessMsg(null);
+
+    if (!actEmail.trim() || !actToken.trim()) {
+      setErrorMsg('Please enter your DBICA work email and one-time activation token.');
+      return;
+    }
+
+    if (actNewPassword.length < 8) {
+      setErrorMsg('Password must be at least 8 characters long for security compliance.');
+      return;
+    }
+
+    if (actNewPassword !== actConfirmPassword) {
+      setErrorMsg('The new passwords do not match. Please re-enter them carefully.');
+      return;
+    }
+
+    setIsSubmitting(true);
+    setTimeout(() => {
+      const result = activateAccount(actEmail, actToken, actNewPassword);
+      setIsSubmitting(false);
+      if (!result.success && result.error) {
+        setErrorMsg(result.error);
+      }
+    }, 400);
+  };
+
+  // Handle Forgot Password - Step 1: Request Recovery Token
+  const handleForgotStep1Submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMsg(null);
+    setSuccessMsg(null);
+
+    if (!forgotEmail.trim()) {
+      setErrorMsg('Please enter your official DBICA registered email.');
+      return;
+    }
+
+    setIsSubmitting(true);
+    setTimeout(() => {
+      const result = requestPasswordReset(forgotEmail);
+      setIsSubmitting(false);
+      if (result.success) {
+        setForgotStep(2);
+        if (result.resetToken) {
+          setResetTokenInput(result.resetToken);
+        }
+        setSuccessMsg(`A one-time recovery code has been generated and dispatched to ${forgotEmail}.`);
+      } else if (result.error) {
+        setErrorMsg(result.error);
+      }
+    }, 350);
+  };
+
+  // Handle Forgot Password - Step 2: Set New Password
+  const handleForgotStep2Submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMsg(null);
+    setSuccessMsg(null);
+
+    if (!resetTokenInput.trim()) {
+      setErrorMsg('Please enter the recovery token received in your notification.');
+      return;
+    }
+
+    if (resetNewPassword.length < 8) {
+      setErrorMsg('New password must be at least 8 characters long.');
+      return;
+    }
+
+    if (resetNewPassword !== resetConfirmPassword) {
+      setErrorMsg('Passwords do not match. Please verify your entries.');
+      return;
+    }
+
+    setIsSubmitting(true);
+    setTimeout(() => {
+      const result = resetPasswordWithToken(forgotEmail, resetTokenInput, resetNewPassword);
+      setIsSubmitting(false);
+      if (result.success) {
+        setSuccessMsg('Your password has been successfully reset! You can now sign in.');
+        setIdentifier(forgotEmail);
+        setPassword(resetNewPassword);
+        setActiveTab('form');
+        setForgotStep(1);
+      } else if (result.error) {
+        setErrorMsg(result.error);
+      }
+    }, 400);
+  };
+
+  // Quick fill helper for existing active profiles
   const handleQuickFill = (email: string) => {
     setIdentifier(email);
     setPassword('dbica@2026');
@@ -263,55 +447,87 @@ export const LoginLandingView: React.FC = () => {
                   Sign in to access your dashboard, requests &amp; leave quota
                 </p>
 
-                {/* Switch Between Form and 1-Click Presets */}
-                <div className="grid grid-cols-2 gap-1 p-1 bg-slate-950/80 border border-slate-800 rounded-xl mt-4 w-full text-xs font-semibold">
+                {/* Switch Between Sign In, First-Time Activation, and Roles */}
+                <div className="grid grid-cols-3 gap-1 p-1 bg-slate-950/80 border border-slate-800 rounded-xl mt-4 w-full text-xs font-semibold">
                   <button
                     type="button"
                     onClick={() => {
                       setActiveTab('form');
                       setErrorMsg(null);
+                      setSuccessMsg(null);
                     }}
-                    className={`py-1.5 px-3 rounded-lg transition-all flex items-center justify-center gap-1.5 ${
-                      activeTab === 'form'
+                    className={`py-1.5 px-2 rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+                      activeTab === 'form' || activeTab === 'forgot'
                         ? 'bg-[#0F5C97] text-white shadow'
                         : 'text-slate-400 hover:text-white'
                     }`}
                   >
-                    <LogIn className="w-3.5 h-3.5" />
-                    Sign In Form
+                    <LogIn className="w-3.5 h-3.5 shrink-0" />
+                    <span>Sign In</span>
                   </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveTab('activate');
+                      setErrorMsg(null);
+                      setSuccessMsg(null);
+                    }}
+                    className={`py-1.5 px-2 rounded-lg transition-all flex items-center justify-center gap-1.5 relative ${
+                      activeTab === 'activate'
+                        ? 'bg-[#0F5C97] text-white shadow'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    <Key className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                    <span>Activate</span>
+                    <span className="hidden sm:inline text-[9px] px-1 py-0.2 rounded-full bg-amber-500/30 text-amber-300 font-bold">New</span>
+                  </button>
+
                   <button
                     type="button"
                     onClick={() => {
                       setActiveTab('presets');
                       setErrorMsg(null);
+                      setSuccessMsg(null);
                     }}
-                    className={`py-1.5 px-3 rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+                    className={`py-1.5 px-2 rounded-lg transition-all flex items-center justify-center gap-1.5 ${
                       activeTab === 'presets'
                         ? 'bg-[#0F5C97] text-white shadow'
                         : 'text-slate-400 hover:text-white'
                     }`}
                   >
-                    <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-                    1-Click Roles
+                    <Sparkles className="w-3.5 h-3.5 text-emerald-300 shrink-0" />
+                    <span>1-Click Roles</span>
                   </button>
                 </div>
               </div>
 
+              {/* Success Notification Alert */}
+              {successMsg && (
+                <div className="mt-4 p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs flex items-start gap-2.5 animate-in fade-in">
+                  <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400 mt-0.5" />
+                  <div>
+                    <p className="font-semibold text-emerald-200">Security Update</p>
+                    <p className="text-emerald-300/90 mt-0.5">{successMsg}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Error Alert */}
+              {errorMsg && (
+                <div className="mt-4 p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-300 text-xs flex items-start gap-2.5 animate-in fade-in">
+                  <AlertCircle className="w-4 h-4 shrink-0 text-red-400 mt-0.5" />
+                  <div>
+                    <p className="font-semibold text-red-200">Authentication Notice</p>
+                    <p className="text-red-300/90 mt-0.5">{errorMsg}</p>
+                  </div>
+                </div>
+              )}
+
               {/* TAB 1: Standard Credential Form */}
               {activeTab === 'form' && (
-                <form onSubmit={handleFormSubmit} className="space-y-4 pt-5">
-                  {/* Error Alert */}
-                  {errorMsg && (
-                    <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-300 text-xs flex items-start gap-2.5 animate-in fade-in">
-                      <AlertCircle className="w-4 h-4 shrink-0 text-red-400 mt-0.5" />
-                      <div>
-                        <p className="font-semibold">Authentication Notice</p>
-                        <p className="text-red-300/90 mt-0.5">{errorMsg}</p>
-                      </div>
-                    </div>
-                  )}
-
+                <form onSubmit={handleFormSubmit} className="space-y-4 pt-4">
                   {/* Identifier Input */}
                   <div className="space-y-1.5 text-left">
                     <label
@@ -329,7 +545,7 @@ export const LoginLandingView: React.FC = () => {
                         type="text"
                         value={identifier}
                         onChange={(e) => setIdentifier(e.target.value)}
-                        placeholder="e.g. director@dbica.org or dbica-001"
+                        placeholder="e.g. director@dbica.org or anand.v@dbica.ac.in"
                         autoComplete="username"
                         className="w-full pl-9.5 pr-4 py-2.5 bg-slate-950/90 border border-slate-700 rounded-xl text-white text-sm focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 placeholder:text-slate-500"
                       />
@@ -347,8 +563,13 @@ export const LoginLandingView: React.FC = () => {
                       </label>
                       <button
                         type="button"
-                        onClick={() => setShowHelpModal(true)}
-                        className="text-[11px] text-sky-400 hover:underline"
+                        onClick={() => {
+                          setForgotEmail(identifier.includes('@') ? identifier : '');
+                          setActiveTab('forgot');
+                          setErrorMsg(null);
+                          setSuccessMsg(null);
+                        }}
+                        className="text-[11px] text-sky-400 hover:underline cursor-pointer"
                       >
                         Forgot password?
                       </button>
@@ -362,7 +583,7 @@ export const LoginLandingView: React.FC = () => {
                         type={showPassword ? 'text' : 'password'}
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
-                        placeholder="Enter your portal password"
+                        placeholder="Enter your confidential password"
                         autoComplete="current-password"
                         className="w-full pl-9.5 pr-10 py-2.5 bg-slate-950/90 border border-slate-700 rounded-xl text-white text-sm focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 placeholder:text-slate-500"
                       />
@@ -417,6 +638,29 @@ export const LoginLandingView: React.FC = () => {
                     )}
                   </button>
 
+                  {/* First Time User Callout */}
+                  <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/25 text-left text-xs text-amber-200/90 flex items-start gap-2.5">
+                    <Key className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                    <div>
+                      <p className="font-semibold text-amber-200">First time here as new staff?</p>
+                      <p className="text-[11px] text-amber-300/80 mt-0.5">
+                        Super Admin cannot set your password. Click{' '}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActiveTab('activate');
+                            setErrorMsg(null);
+                            setSuccessMsg(null);
+                          }}
+                          className="font-bold underline text-amber-300 hover:text-white"
+                        >
+                          Activate Account
+                        </button>{' '}
+                        with your one-time invite token to choose your confidential password.
+                      </p>
+                    </div>
+                  </div>
+
                   {/* Quick-fill shortcut buttons */}
                   <div className="pt-2 border-t border-slate-800">
                     <p className="text-[11px] text-slate-400 text-center mb-2 font-medium">
@@ -426,7 +670,7 @@ export const LoginLandingView: React.FC = () => {
                       <button
                         type="button"
                         onClick={() => handleQuickFill('director@dbica.org')}
-                        className="px-4 py-2 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 text-center font-medium transition"
+                        className="px-4 py-2 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 text-center font-medium transition cursor-pointer"
                       >
                         Super Admin: Fr. Joseph Raj SDB (director@dbica.org)
                       </button>
@@ -435,7 +679,333 @@ export const LoginLandingView: React.FC = () => {
                 </form>
               )}
 
-              {/* TAB 2: 1-Click Instant Demo Roles */}
+              {/* TAB 2: Zero-Trust Account Activation (Staff Self-Service Password Initialization) */}
+              {activeTab === 'activate' && (() => {
+                const strength = calculatePasswordStrength(actNewPassword);
+                const passwordsMatch = actNewPassword && actNewPassword === actConfirmPassword;
+
+                return (
+                  <form onSubmit={handleActivationSubmit} className="space-y-4 pt-4 text-left">
+                    <div className="p-3 rounded-xl bg-sky-950/40 border border-sky-800/60 text-xs text-sky-200">
+                      <div className="flex items-center gap-1.5 font-bold text-sky-300 mb-1">
+                        <ShieldCheck className="w-4 h-4 text-sky-400" />
+                        <span>Zero-Trust Staff Credential Safeguard</span>
+                      </div>
+                      <p className="text-[11px] text-slate-300 leading-relaxed">
+                        To guarantee non-repudiation and privacy, DBICA Super Admins <strong>never</strong> know or assign staff passwords. Enter your official email and invitation token below to initialize your confidential password.
+                      </p>
+                    </div>
+
+                    {/* Email Input */}
+                    <div className="space-y-1">
+                      <label className="block text-xs font-semibold text-slate-300">
+                        Official Work Email *
+                      </label>
+                      <div className="relative">
+                        <Mail className="w-4 h-4 text-slate-400 absolute inset-y-0 left-3 my-auto pointer-events-none" />
+                        <input
+                          type="email"
+                          required
+                          value={actEmail}
+                          onChange={(e) => setActEmail(e.target.value)}
+                          placeholder="e.g. anand.v@dbica.ac.in"
+                          className="w-full pl-9.5 pr-4 py-2 bg-slate-950/90 border border-slate-700 rounded-xl text-white text-xs sm:text-sm focus:outline-none focus:border-sky-500"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Activation Token Input */}
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between">
+                        <label className="block text-xs font-semibold text-slate-300">
+                          One-Time Activation Token *
+                        </label>
+                        <span className="text-[10.5px] text-slate-400">Received via invite/admin</span>
+                      </div>
+                      <div className="relative">
+                        <Key className="w-4 h-4 text-amber-400 absolute inset-y-0 left-3 my-auto pointer-events-none" />
+                        <input
+                          type="text"
+                          required
+                          value={actToken}
+                          onChange={(e) => setActToken(e.target.value)}
+                          placeholder="e.g. act-A98B2-7K2M"
+                          className="w-full pl-9.5 pr-4 py-2 bg-slate-950/90 border border-slate-700 rounded-xl text-white text-xs sm:text-sm font-mono tracking-wide focus:outline-none focus:border-sky-500 uppercase"
+                        />
+                      </div>
+                    </div>
+
+                    {/* New Password Input */}
+                    <div className="space-y-1">
+                      <label className="block text-xs font-semibold text-slate-300">
+                        Create Confidential Password *
+                      </label>
+                      <div className="relative">
+                        <Lock className="w-4 h-4 text-slate-400 absolute inset-y-0 left-3 my-auto pointer-events-none" />
+                        <input
+                          type={showActPassword ? 'text' : 'password'}
+                          required
+                          value={actNewPassword}
+                          onChange={(e) => setActNewPassword(e.target.value)}
+                          placeholder="At least 8 characters"
+                          className="w-full pl-9.5 pr-10 py-2 bg-slate-950/90 border border-slate-700 rounded-xl text-white text-xs sm:text-sm focus:outline-none focus:border-sky-500"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowActPassword(!showActPassword)}
+                          className="absolute inset-y-0 right-3 flex items-center text-slate-400 hover:text-white"
+                        >
+                          {showActPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                        </button>
+                      </div>
+
+                      {/* Password Strength Meter */}
+                      {actNewPassword.length > 0 && (
+                        <div className="pt-1.5 space-y-1.5">
+                          <div className="flex items-center justify-between text-[11px]">
+                            <span className="text-slate-400">Password Strength:</span>
+                            <span className="font-bold text-white">{strength.label}</span>
+                          </div>
+                          <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden flex gap-1">
+                            <div className={`h-full flex-1 transition-all ${strength.score >= 1 ? strength.color : 'bg-transparent'}`} />
+                            <div className={`h-full flex-1 transition-all ${strength.score >= 2 ? strength.color : 'bg-transparent'}`} />
+                            <div className={`h-full flex-1 transition-all ${strength.score >= 3 ? strength.color : 'bg-transparent'}`} />
+                            <div className={`h-full flex-1 transition-all ${strength.score >= 4 ? strength.color : 'bg-transparent'}`} />
+                          </div>
+
+                          {/* Security Checklist */}
+                          <div className="grid grid-cols-2 gap-1.5 pt-1 text-[10.5px]">
+                            <span className={`flex items-center gap-1 ${strength.hasMinLength ? 'text-emerald-400' : 'text-slate-400'}`}>
+                              <Check className={`w-3 h-3 ${strength.hasMinLength ? 'text-emerald-400' : 'text-slate-600'}`} />
+                              8+ Characters
+                            </span>
+                            <span className={`flex items-center gap-1 ${strength.hasUpper && strength.hasLower ? 'text-emerald-400' : 'text-slate-400'}`}>
+                              <Check className={`w-3 h-3 ${strength.hasUpper && strength.hasLower ? 'text-emerald-400' : 'text-slate-600'}`} />
+                              Mixed Case (A-z)
+                            </span>
+                            <span className={`flex items-center gap-1 ${strength.hasNumberOrSpecial ? 'text-emerald-400' : 'text-slate-400'}`}>
+                              <Check className={`w-3 h-3 ${strength.hasNumberOrSpecial ? 'text-emerald-400' : 'text-slate-600'}`} />
+                              Number / Symbol
+                            </span>
+                            <span className={`flex items-center gap-1 ${passwordsMatch ? 'text-emerald-400' : 'text-slate-400'}`}>
+                              <Check className={`w-3 h-3 ${passwordsMatch ? 'text-emerald-400' : 'text-slate-600'}`} />
+                              Passwords Match
+                            </span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Confirm Password Input */}
+                    <div className="space-y-1">
+                      <label className="block text-xs font-semibold text-slate-300">
+                        Confirm Confidential Password *
+                      </label>
+                      <div className="relative">
+                        <Lock className="w-4 h-4 text-slate-400 absolute inset-y-0 left-3 my-auto pointer-events-none" />
+                        <input
+                          type={showActPassword ? 'text' : 'password'}
+                          required
+                          value={actConfirmPassword}
+                          onChange={(e) => setActConfirmPassword(e.target.value)}
+                          placeholder="Re-enter your password"
+                          className="w-full pl-9.5 pr-4 py-2 bg-slate-950/90 border border-slate-700 rounded-xl text-white text-xs sm:text-sm focus:outline-none focus:border-sky-500"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Activate Button */}
+                    <button
+                      type="submit"
+                      disabled={isSubmitting || strength.score < 2 || !passwordsMatch}
+                      className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-500 hover:to-teal-600 text-white font-semibold text-sm shadow-lg shadow-emerald-600/30 transition-all flex items-center justify-center gap-2 group disabled:opacity-50 cursor-pointer"
+                    >
+                      {isSubmitting ? (
+                        <>
+                          <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                          <span>Activating Account...</span>
+                        </>
+                      ) : (
+                        <>
+                          <ShieldCheck className="w-4 h-4" />
+                          <span>Claim Account &amp; Set Password</span>
+                        </>
+                      )}
+                    </button>
+
+                    <div className="text-center pt-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActiveTab('form');
+                          setErrorMsg(null);
+                        }}
+                        className="text-xs text-sky-400 hover:underline"
+                      >
+                        Already have an established password? Back to Sign In
+                      </button>
+                    </div>
+                  </form>
+                );
+              })()}
+
+              {/* TAB 3: Forgot Password Self-Service Recovery */}
+              {activeTab === 'forgot' && (() => {
+                const strength = calculatePasswordStrength(resetNewPassword);
+                const passwordsMatch = resetNewPassword && resetNewPassword === resetConfirmPassword;
+
+                return (
+                  <div className="space-y-4 pt-4 text-left">
+                    <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+                      <div className="flex items-center gap-2">
+                        <Lock className="w-4 h-4 text-sky-400" />
+                        <h3 className="text-sm font-bold text-white">Reset Staff Password</h3>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActiveTab('form');
+                          setErrorMsg(null);
+                          setSuccessMsg(null);
+                        }}
+                        className="text-xs text-slate-400 hover:text-white"
+                      >
+                        Back to Login
+                      </button>
+                    </div>
+
+                    {forgotStep === 1 ? (
+                      <form onSubmit={handleForgotStep1Submit} className="space-y-3.5">
+                        <p className="text-xs text-slate-300">
+                          Enter your registered DBICA email. A secure one-time recovery token will be dispatched to your account.
+                        </p>
+
+                        <div className="space-y-1">
+                          <label className="block text-xs font-semibold text-slate-300">
+                            Registered DBICA Email *
+                          </label>
+                          <div className="relative">
+                            <Mail className="w-4 h-4 text-slate-400 absolute inset-y-0 left-3 my-auto pointer-events-none" />
+                            <input
+                              type="email"
+                              required
+                              value={forgotEmail}
+                              onChange={(e) => setForgotEmail(e.target.value)}
+                              placeholder="e.g. director@dbica.org or your work email"
+                              className="w-full pl-9.5 pr-4 py-2 bg-slate-950/90 border border-slate-700 rounded-xl text-white text-xs sm:text-sm focus:outline-none focus:border-sky-500"
+                            />
+                          </div>
+                        </div>
+
+                        <button
+                          type="submit"
+                          disabled={isSubmitting}
+                          className="w-full py-2.5 px-4 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-semibold text-xs sm:text-sm shadow transition flex items-center justify-center gap-2 cursor-pointer"
+                        >
+                          {isSubmitting ? (
+                            <>
+                              <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                              <span>Dispatching Token...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Key className="w-4 h-4" />
+                              <span>Generate Recovery Code</span>
+                            </>
+                          )}
+                        </button>
+                      </form>
+                    ) : (
+                      <form onSubmit={handleForgotStep2Submit} className="space-y-3.5">
+                        <div className="p-2.5 rounded-xl bg-slate-800 text-xs text-slate-300">
+                          <p>
+                            Enter the recovery token dispatched to <strong className="text-white">{forgotEmail}</strong> along with your new password.
+                          </p>
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="block text-xs font-semibold text-slate-300">
+                            One-Time Recovery Token *
+                          </label>
+                          <input
+                            type="text"
+                            required
+                            value={resetTokenInput}
+                            onChange={(e) => setResetTokenInput(e.target.value)}
+                            placeholder="e.g. rst-7KB29-92L"
+                            className="w-full px-3 py-2 bg-slate-950/90 border border-slate-700 rounded-xl text-white text-xs sm:text-sm font-mono tracking-wide focus:outline-none focus:border-sky-500 uppercase"
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="block text-xs font-semibold text-slate-300">
+                            New Confidential Password *
+                          </label>
+                          <div className="relative">
+                            <input
+                              type={showResetPassword ? 'text' : 'password'}
+                              required
+                              value={resetNewPassword}
+                              onChange={(e) => setResetNewPassword(e.target.value)}
+                              placeholder="Minimum 8 characters"
+                              className="w-full px-3 pr-10 py-2 bg-slate-950/90 border border-slate-700 rounded-xl text-white text-xs sm:text-sm focus:outline-none focus:border-sky-500"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setShowResetPassword(!showResetPassword)}
+                              className="absolute inset-y-0 right-3 flex items-center text-slate-400 hover:text-white"
+                            >
+                              {showResetPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="block text-xs font-semibold text-slate-300">
+                            Confirm New Password *
+                          </label>
+                          <input
+                            type={showResetPassword ? 'text' : 'password'}
+                            required
+                            value={resetConfirmPassword}
+                            onChange={(e) => setResetConfirmPassword(e.target.value)}
+                            placeholder="Re-type new password"
+                            className="w-full px-3 py-2 bg-slate-950/90 border border-slate-700 rounded-xl text-white text-xs sm:text-sm focus:outline-none focus:border-sky-500"
+                          />
+                        </div>
+
+                        <button
+                          type="submit"
+                          disabled={isSubmitting || resetNewPassword.length < 8 || !passwordsMatch}
+                          className="w-full py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs sm:text-sm shadow transition flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
+                        >
+                          {isSubmitting ? (
+                            <>
+                              <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                              <span>Updating Password...</span>
+                            </>
+                          ) : (
+                            <>
+                              <CheckCircle2 className="w-4 h-4" />
+                              <span>Update Password &amp; Sign In</span>
+                            </>
+                          )}
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setForgotStep(1)}
+                          className="w-full text-center text-xs text-slate-400 hover:text-white"
+                        >
+                          Didn't get code? Request again
+                        </button>
+                      </form>
+                    )}
+                  </div>
+                );
+              })()}
+
+              {/* TAB 4: 1-Click Instant Demo Roles */}
               {activeTab === 'presets' && (
                 <div className="space-y-3 pt-5">
                   <p className="text-xs text-slate-300 mb-2">

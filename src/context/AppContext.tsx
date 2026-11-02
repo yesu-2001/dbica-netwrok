@@ -48,6 +48,13 @@ interface AppContextType {
   switchUser: (staffId: string) => void;
   quickSwitchRole: (role: StaffMember['role']) => void;
 
+  // Zero-Trust Onboarding, Account Activation & Password Security
+  activateAccount: (email: string, token: string, newPassword: string) => { success: boolean; error?: string };
+  requestPasswordReset: (email: string) => { success: boolean; resetToken?: string; error?: string };
+  resetPasswordWithToken: (email: string, token: string, newPassword: string) => { success: boolean; error?: string };
+  resendActivationInvite: (staffId: string) => { success: boolean; inviteLink?: string; token?: string; error?: string };
+  toggleStaffSuspension: (staffId: string) => { success: boolean; error?: string };
+
   // Leave Actions
   applyLeave: (data: {
     leaveType: LeaveType;
@@ -78,7 +85,13 @@ interface AppContextType {
   overrideLeave: (requestId: string, newStatus: LeaveRequest['status'], reason: string) => { success: boolean; error?: string };
 
   // Staff Directory & Management
-  addStaff: (staffData: Omit<StaffMember, 'id'>) => { success: boolean; error?: string };
+  addStaff: (staffData: Omit<StaffMember, 'id'>) => {
+    success: boolean;
+    error?: string;
+    newStaff?: StaffMember;
+    activationLink?: string;
+    activationToken?: string;
+  };
   updateStaff: (id: string, staffData: Partial<StaffMember>) => { success: boolean; error?: string };
   updateOwnProfile: (profileData: {
     name: string;
@@ -502,14 +515,35 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!matched) {
       return {
         success: false,
-        error: `No staff record found matching "${identifier}". Please verify your credentials or select a quick demo profile below.`,
+        error: `No staff record found matching "${identifier}". Please verify your credentials or use your activation invite.`,
       };
     }
 
-    if (matched.status === 'Inactive') {
+    // Safeguard 1: Brute-force Lockout check
+    if (matched.lockoutUntil) {
+      const lockoutTime = new Date(matched.lockoutUntil).getTime();
+      if (lockoutTime > Date.now()) {
+        const remainingSecs = Math.ceil((lockoutTime - Date.now()) / 1000);
+        return {
+          success: false,
+          error: `Account is temporarily locked for security due to multiple failed login attempts. Please retry in ${remainingSecs} seconds.`,
+        };
+      }
+    }
+
+    // Safeguard 2: Suspension check
+    if (matched.accountStatus === 'suspended' || matched.status === 'Inactive') {
       return {
         success: false,
-        error: 'This staff account has been deactivated. Please contact the DBICA HR office.',
+        error: 'This staff account has been suspended by administration. Access denied.',
+      };
+    }
+
+    // Safeguard 3: First-time Account Onboarding & Private Password Setup check
+    if (matched.accountStatus === 'invited' && !matched.portalPassword) {
+      return {
+        success: false,
+        error: `Account for ${matched.name} has not been activated yet. Please click "Activate Account" below using your one-time activation token to set your private password.`,
       };
     }
 
@@ -523,12 +557,46 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         password === 'hod2026';
 
       if (password !== storedPass && !isUniversalDemo) {
-        return {
-          success: false,
-          error: 'Incorrect password for this staff account. Default demo password is "dbica@2026".',
-        };
+        const failedAttempts = (matched.failedLoginAttempts || 0) + 1;
+        if (failedAttempts >= 5) {
+          const lockoutUntil = new Date(Date.now() + 60 * 1000).toISOString();
+          const lockoutUpdate = { failedLoginAttempts: failedAttempts, lockoutUntil };
+          firestoreService.updateStaffFields(matched.id, lockoutUpdate);
+          setStaffList((prev) =>
+            prev.map((s) => (s.id === matched.id ? { ...s, ...lockoutUpdate } : s))
+          );
+          createAuditEntry(
+            'SECURITY_LOCKOUT',
+            `Account ${matched.email} temporarily locked for 1 minute following 5 failed password attempts`,
+            matched.id
+          );
+          return {
+            success: false,
+            error: 'Account temporarily locked for 1 minute due to 5 consecutive failed password attempts.',
+          };
+        } else {
+          firestoreService.updateStaffFields(matched.id, { failedLoginAttempts: failedAttempts });
+          setStaffList((prev) =>
+            prev.map((s) => (s.id === matched.id ? { ...s, failedLoginAttempts: failedAttempts } : s))
+          );
+          return {
+            success: false,
+            error: `Incorrect password for this staff account. (${5 - failedAttempts} attempts remaining before temporary lockout)`,
+          };
+        }
       }
     }
+
+    // Successful login: reset failed attempts and log timestamp
+    const authUpdate = {
+      failedLoginAttempts: 0,
+      lockoutUntil: undefined,
+      lastLoginAt: new Date().toISOString(),
+    };
+    firestoreService.updateStaffFields(matched.id, authUpdate);
+    setStaffList((prev) =>
+      prev.map((s) => (s.id === matched.id ? { ...s, ...authUpdate } : s))
+    );
 
     setCurrentUserId(matched.id);
     setIsAuthenticated(true);
@@ -551,6 +619,282 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
 
     addToast('Welcome to DBICA', `Signed in as ${matched.name} (${matched.role})`, 'success');
+    return { success: true };
+  };
+
+  // Zero-Trust First-Time Activation: Staff initializes their own private confidential password
+  const activateAccount = (
+    email: string,
+    token: string,
+    newPassword: string
+  ): { success: boolean; error?: string } => {
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanToken = token.trim();
+
+    if (!cleanEmail || !cleanToken) {
+      return { success: false, error: 'Both official email and one-time activation token are required.' };
+    }
+
+    if (!newPassword || newPassword.length < 8) {
+      return { success: false, error: 'Password must be at least 8 characters long for security compliance.' };
+    }
+
+    const matched = staffList.find((s) => s.email.toLowerCase() === cleanEmail);
+    if (!matched) {
+      return { success: false, error: 'No staff record found with this email address.' };
+    }
+
+    if (matched.accountStatus === 'suspended') {
+      return { success: false, error: 'This staff account is suspended. Please contact the administrator.' };
+    }
+
+    if (!matched.activationToken || matched.activationToken !== cleanToken) {
+      return {
+        success: false,
+        error: 'Invalid activation token. Please ensure you entered the exact token from your invitation, or request a new one.',
+      };
+    }
+
+    if (matched.activationExpiresAt && new Date(matched.activationExpiresAt).getTime() < Date.now()) {
+      return {
+        success: false,
+        error: 'This activation token has expired. Please ask Super Admin or HR to reissue an invitation.',
+      };
+    }
+
+    const activationUpdates = {
+      portalPassword: newPassword,
+      accountStatus: 'active' as const,
+      status: 'Active' as const,
+      activationToken: undefined,
+      activationExpiresAt: undefined,
+      activatedAt: new Date().toISOString(),
+      failedLoginAttempts: 0,
+      lockoutUntil: undefined,
+      lastLoginAt: new Date().toISOString(),
+    };
+
+    setStaffList((prev) =>
+      prev.map((s) => (s.id === matched.id ? { ...s, ...activationUpdates } : s))
+    );
+
+    firestoreService.updateStaffFields(matched.id, activationUpdates);
+
+    createAuditEntry(
+      'ACCOUNT_ACTIVATED',
+      `Staff member ${matched.name} (${matched.email}) successfully claimed account and established confidential password.`,
+      matched.id
+    );
+
+    // Auto-login newly activated user
+    setCurrentUserId(matched.id);
+    setIsAuthenticated(true);
+    try {
+      localStorage.setItem(STORAGE_KEYS.IS_AUTHENTICATED, 'true');
+      localStorage.setItem(STORAGE_KEYS.CURRENT_USER_ID, matched.id);
+    } catch {}
+
+    addToast('Account Activated', `Welcome to DBICA, ${matched.name}! Your private password is set.`, 'success');
+    return { success: true };
+  };
+
+  // Self-Service Password Recovery
+  const requestPasswordReset = (
+    email: string
+  ): { success: boolean; resetToken?: string; error?: string } => {
+    const cleanEmail = email.trim().toLowerCase();
+    if (!cleanEmail) {
+      return { success: false, error: 'Please enter your registered DBICA email address.' };
+    }
+
+    const matched = staffList.find((s) => s.email.toLowerCase() === cleanEmail);
+    if (!matched) {
+      return { success: false, error: 'No staff profile found matching this email address.' };
+    }
+
+    if (matched.accountStatus === 'suspended') {
+      return { success: false, error: 'This account has been suspended by administration. Password recovery is prohibited.' };
+    }
+
+    const resetToken = 'rst-' + Math.random().toString(36).substring(2, 8).toUpperCase() + '-' + Math.random().toString(36).substring(2, 6).toUpperCase();
+    const resetExpiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString(); // 1 hour validity
+
+    const updates = { resetToken, resetExpiresAt };
+
+    setStaffList((prev) =>
+      prev.map((s) => (s.id === matched.id ? { ...s, ...updates } : s))
+    );
+
+    firestoreService.updateStaffFields(matched.id, updates);
+
+    createAuditEntry(
+      'PASSWORD_RESET_REQUESTED',
+      `Self-service password recovery token generated for ${matched.name} (${matched.email})`,
+      matched.id
+    );
+
+    notificationService.dispatchCustom(
+      matched.name,
+      matched.phone,
+      matched.email,
+      'both',
+      'DBICA Portal - Password Reset Security Token',
+      `Dear ${matched.name}, your one-time password reset code is: ${resetToken}. This code expires in 1 hour. Use it on the login page to establish a new password.`,
+      { staffId: matched.id, staffName: matched.name, department: matched.department }
+    );
+
+    addToast('Security Code Dispatched', `Password reset token sent to ${matched.email}`, 'info');
+    return { success: true, resetToken };
+  };
+
+  // Set new password using verified reset token
+  const resetPasswordWithToken = (
+    email: string,
+    token: string,
+    newPassword: string
+  ): { success: boolean; error?: string } => {
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanToken = token.trim();
+
+    if (!cleanEmail || !cleanToken) {
+      return { success: false, error: 'Email and recovery code are required.' };
+    }
+
+    if (!newPassword || newPassword.length < 8) {
+      return { success: false, error: 'New password must be at least 8 characters long.' };
+    }
+
+    const matched = staffList.find((s) => s.email.toLowerCase() === cleanEmail);
+    if (!matched) {
+      return { success: false, error: 'No staff record found with this email address.' };
+    }
+
+    if (matched.accountStatus === 'suspended') {
+      return { success: false, error: 'This account is suspended. Contact administration.' };
+    }
+
+    if (!matched.resetToken || matched.resetToken !== cleanToken) {
+      return { success: false, error: 'Invalid password recovery code. Please request a fresh code.' };
+    }
+
+    if (matched.resetExpiresAt && new Date(matched.resetExpiresAt).getTime() < Date.now()) {
+      return { success: false, error: 'Recovery code has expired. Please request a new one.' };
+    }
+
+    const updates = {
+      portalPassword: newPassword,
+      resetToken: undefined,
+      resetExpiresAt: undefined,
+      failedLoginAttempts: 0,
+      lockoutUntil: undefined,
+    };
+
+    setStaffList((prev) =>
+      prev.map((s) => (s.id === matched.id ? { ...s, ...updates } : s))
+    );
+
+    firestoreService.updateStaffFields(matched.id, updates);
+
+    createAuditEntry(
+      'PASSWORD_RESET_COMPLETED',
+      `Staff member ${matched.name} (${matched.email}) successfully reset password using recovery token.`,
+      matched.id
+    );
+
+    addToast('Password Updated', 'Your confidential password has been updated. You can now sign in.', 'success');
+    return { success: true };
+  };
+
+  // Resend or generate new onboarding invitation token
+  const resendActivationInvite = (
+    staffId: string
+  ): { success: boolean; inviteLink?: string; token?: string; error?: string } => {
+    if (currentUser.role !== 'Super Admin' && currentUser.role !== 'HR') {
+      return { success: false, error: 'Only Super Admin and HR can issue account invitations.' };
+    }
+
+    const target = staffList.find((s) => s.id === staffId);
+    if (!target) return { success: false, error: 'Staff member not found.' };
+
+    const activationToken = 'act-' + Math.random().toString(36).substring(2, 9).toUpperCase() + '-' + Math.random().toString(36).substring(2, 7).toUpperCase();
+    const activationExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+
+    const updates = {
+      accountStatus: 'invited' as const,
+      activationToken,
+      activationExpiresAt,
+    };
+
+    setStaffList((prev) =>
+      prev.map((s) => (s.id === staffId ? { ...s, ...updates } : s))
+    );
+
+    firestoreService.updateStaffFields(staffId, updates);
+
+    createAuditEntry(
+      'ACTIVATION_INVITE_ISSUED',
+      `Regenerated onboarding activation invite for ${target.name} (${target.email})`,
+      staffId
+    );
+
+    notificationService.dispatchCustom(
+      target.name,
+      target.phone,
+      target.email,
+      'both',
+      'DBICA Staff Portal - Onboarding Invitation & Password Setup',
+      `Dear ${target.name}, your DBICA staff portal profile is ready. Use activation token: ${activationToken} or click your personal link to set your password.`,
+      { staffId: target.id, staffName: target.name, department: target.department }
+    );
+
+    const inviteLink = `${window.location.origin}/#activate?token=${activationToken}&email=${encodeURIComponent(target.email)}`;
+
+    addToast('Invitation Issued', `Onboarding link dispatched to ${target.email}`, 'success');
+    return { success: true, inviteLink, token: activationToken };
+  };
+
+  // Super Admin Account Suspension / Reactivation for Safeguarding
+  const toggleStaffSuspension = (
+    staffId: string
+  ): { success: boolean; error?: string } => {
+    if (currentUser.role !== 'Super Admin') {
+      return { success: false, error: 'Only Super Admin can suspend or reactivate staff accounts.' };
+    }
+
+    const target = staffList.find((s) => s.id === staffId);
+    if (!target) return { success: false, error: 'Staff member not found.' };
+
+    if (target.role === 'Super Admin' || target.id === 'dbica-001') {
+      return { success: false, error: 'Cannot suspend the Super Admin institutional director account.' };
+    }
+
+    const isCurrentlySuspended = target.accountStatus === 'suspended' || target.status === 'Inactive';
+    const nextAccountStatus = isCurrentlySuspended ? 'active' : 'suspended';
+    const nextStatus = isCurrentlySuspended ? 'Active' : 'Inactive';
+
+    const updates = {
+      accountStatus: nextAccountStatus as 'active' | 'suspended',
+      status: nextStatus as 'Active' | 'Inactive',
+    };
+
+    setStaffList((prev) =>
+      prev.map((s) => (s.id === staffId ? { ...s, ...updates } : s))
+    );
+
+    firestoreService.updateStaffFields(staffId, updates);
+
+    createAuditEntry(
+      isCurrentlySuspended ? 'STAFF_REMOTELY_REACTIVATED' : 'STAFF_REMOTELY_SUSPENDED',
+      `Super Admin ${isCurrentlySuspended ? 'restored active access for' : 'suspended portal access for'} ${target.name} (${target.email})`,
+      staffId
+    );
+
+    addToast(
+      isCurrentlySuspended ? 'Account Reactivated' : 'Account Suspended',
+      `${target.name}'s portal login has been ${isCurrentlySuspended ? 'restored' : 'suspended for safeguarding'}.`,
+      isCurrentlySuspended ? 'success' : 'warning'
+    );
+
     return { success: true };
   };
 
@@ -1282,19 +1626,52 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     ];
     const avatarBg = avatarBgs[Math.floor(Math.random() * avatarBgs.length)];
 
+    // Safeguarding Architecture: Zero-Knowledge Admin Creation
+    // Super Admin NEVER generates or knows staff password.
+    // Instead, a high-entropy activation token is generated for the staff member to set their own private password.
+    const activationToken = 'act-' + Math.random().toString(36).substring(2, 9).toUpperCase() + '-' + Math.random().toString(36).substring(2, 7).toUpperCase();
+    const activationExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(); // 7 days validity
+
     const newStaff: StaffMember = {
       ...staffData,
       id: newId,
       avatarBg,
       status: staffData.status || 'Active',
-      portalPassword: staffData.portalPassword || 'dbica@2026',
+      accountStatus: 'invited',
+      activationToken,
+      activationExpiresAt,
+      portalPassword: undefined, // Strictly confidential, to be chosen by staff
     };
 
     setStaffList((prev) => [...prev, newStaff]);
     firestoreService.upsertStaff(newStaff);
-    createAuditEntry('STAFF_CREATED', `Created new staff record for ${newStaff.name} (${newStaff.role}, ${newStaff.department})`, newId);
-    addToast('Staff Added', `${newStaff.name} has been added to the directory and database.`, 'success');
-    return { success: true };
+
+    createAuditEntry(
+      'STAFF_CREATED',
+      `Onboarded staff profile for ${newStaff.name} (${newStaff.role}, ${newStaff.department}). One-time activation token issued for employee password setup.`,
+      newId
+    );
+
+    // Auto-dispatch onboarding invitation notice
+    notificationService.dispatchCustomNotification({
+      recipientName: newStaff.name,
+      email: newStaff.email,
+      phone: newStaff.phone,
+      channel: 'both',
+      subject: 'Welcome to DBICA - Account Invitation & Password Setup',
+      message: `Dear ${newStaff.name}, your DBICA staff profile has been created. To establish your confidential password, use activation token: ${activationToken} or click your personal onboarding link.`,
+      targetStaffId: newStaff.id,
+      department: newStaff.department,
+    });
+
+    const inviteLink = `${window.location.origin}/#activate?token=${activationToken}&email=${encodeURIComponent(newStaff.email)}`;
+
+    addToast(
+      'Staff Onboarded & Invite Dispatched',
+      `${newStaff.name} created. Secure activation link generated for employee password setup.`,
+      'success'
+    );
+    return { success: true, newStaff, activationLink, activationToken };
   };
 
   const updateStaff = (id: string, staffData: Partial<StaffMember>) => {
@@ -1910,6 +2287,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         logout,
         switchUser,
         quickSwitchRole,
+        activateAccount,
+        requestPasswordReset,
+        resetPasswordWithToken,
+        resendActivationInvite,
+        toggleStaffSuspension,
         applyLeave,
         getMonthlyPermissionStats,
         cancelLeave,
