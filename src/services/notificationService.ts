@@ -136,6 +136,7 @@ class NotificationDispatchService {
       status: 'dispatched',
       metadata: {
         requestId: request.id,
+        staffId: request.staffId,
         staffName: request.staffName,
         department: request.department,
         leaveType: request.leaveType,
@@ -180,6 +181,7 @@ class NotificationDispatchService {
         message: waText,
         metadata: {
           requestId: request.id,
+          staffId: request.staffId,
           staffName: request.staffName,
           department: request.department,
           leaveType: request.leaveType,
@@ -230,6 +232,7 @@ class NotificationDispatchService {
       message: hodWaText,
       metadata: {
         requestId: request.id,
+        staffId: request.staffId,
         staffName: request.staffName,
         department: request.department,
         leaveType: request.leaveType,
@@ -272,6 +275,14 @@ class NotificationDispatchService {
       timestamp,
       referenceId: request.id,
       status: 'dispatched',
+      metadata: {
+        requestId: request.id,
+        staffId: request.staffId,
+        staffName: request.staffName,
+        department: request.department,
+        leaveType: request.leaveType,
+        actionedBy,
+      },
       message: `Dear ${request.staffName},\n\nYour ${isPermission ? 'permission request' : 'leave application'} #${request.id} has been APPROVED by ${actionedBy}.\n\n` +
         `• Category: ${isPermission ? 'Permission (Monthly Short Absence)' : `${request.leaveType} Leave`}\n` +
         `• Details: ${durationLabel}\n` +
@@ -306,6 +317,14 @@ class NotificationDispatchService {
         status: 'delivered',
         whatsappUrl: buildWhatsAppDirectUrl(applicantPhone, waText),
         message: waText,
+        metadata: {
+          requestId: request.id,
+          staffId: request.staffId,
+          staffName: request.staffName,
+          department: request.department,
+          leaveType: request.leaveType,
+          actionedBy,
+        },
       };
       await this.recordAndDispatch(waNotif);
       results.push(waNotif);
@@ -339,6 +358,15 @@ class NotificationDispatchService {
       timestamp,
       referenceId: request.id,
       status: 'dispatched',
+      metadata: {
+        requestId: request.id,
+        staffId: request.staffId,
+        staffName: request.staffName,
+        department: request.department,
+        leaveType: request.leaveType,
+        actionedBy,
+        rejectionReason,
+      },
       message: `Dear ${request.staffName},\n\nYour application #${request.id} for ${isPermission ? 'Permission' : `${request.leaveType} leave`} could not be approved at this time.\n\n` +
         `• Reviewed By: ${actionedBy}\n` +
         `• Reason: "${rejectionReason}"\n\n` +
@@ -370,6 +398,15 @@ class NotificationDispatchService {
         status: 'delivered',
         whatsappUrl: buildWhatsAppDirectUrl(applicantPhone, waText),
         message: waText,
+        metadata: {
+          requestId: request.id,
+          staffId: request.staffId,
+          staffName: request.staffName,
+          department: request.department,
+          leaveType: request.leaveType,
+          actionedBy,
+          rejectionReason,
+        },
       };
       await this.recordAndDispatch(waNotif);
       results.push(waNotif);
@@ -387,7 +424,8 @@ class NotificationDispatchService {
     email: string,
     channel: NotificationChannel,
     subject: string,
-    message: string
+    message: string,
+    metadata?: DispatchedNotification['metadata']
   ): Promise<DispatchedNotification> {
     const timestamp = new Date().toISOString();
     const cleanPhone = phone ? formatWhatsAppPhone(phone) : '';
@@ -405,6 +443,7 @@ class NotificationDispatchService {
       timestamp,
       status: 'delivered',
       whatsappUrl: waUrl,
+      metadata,
     };
 
     await this.recordAndDispatch(notif);

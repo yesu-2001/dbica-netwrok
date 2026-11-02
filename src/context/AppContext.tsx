@@ -120,6 +120,8 @@ interface AppContextType {
     channel: NotificationChannel;
     subject: string;
     message: string;
+    targetStaffId?: string;
+    department?: string;
   }) => Promise<DispatchedNotification>;
 
   // System
@@ -294,32 +296,93 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return unsubscribe;
   }, []);
 
-  // Initial cloud database synchronization from Firestore
+  // Initial cloud database synchronization & Real-time onSnapshot Listeners from Firestore
   useEffect(() => {
     let isMounted = true;
+    let unsubStaff: (() => void) | undefined;
+    let unsubLeaves: (() => void) | undefined;
+    let unsubDepts: (() => void) | undefined;
+    let unsubSettings: (() => void) | undefined;
+    let unsubAudit: (() => void) | undefined;
+    let unsubNotifs: (() => void) | undefined;
+
+    // 1. Initial hydration and seed check
     firestoreService
       .loadAllData()
       .then((cloudData) => {
-        if (!isMounted || !cloudData) return;
-        if (cloudData.staffList && cloudData.staffList.length > 0) {
-          setStaffList(cloudData.staffList);
+        if (!isMounted) return;
+        if (cloudData) {
+          if (cloudData.staffList && cloudData.staffList.length > 0) {
+            setStaffList(cloudData.staffList);
+          }
+          if (cloudData.departments && cloudData.departments.length > 0) {
+            setDepartments(cloudData.departments);
+          }
+          if (cloudData.globalThresholds) {
+            setGlobalThresholds(cloudData.globalThresholds);
+          }
+          if (cloudData.leaveRequests !== undefined) {
+            setLeaveRequests(cloudData.leaveRequests);
+          }
+          if (cloudData.auditLogs !== undefined) {
+            setAuditLogs(cloudData.auditLogs);
+          }
+          if (cloudData.notifications !== undefined) {
+            setDispatchedNotifications(cloudData.notifications);
+          }
+          setIsCloudConnected(true);
         }
-        if (cloudData.departments && cloudData.departments.length > 0) {
-          setDepartments(cloudData.departments);
-        }
-        if (cloudData.globalThresholds) {
-          setGlobalThresholds(cloudData.globalThresholds);
-        }
-        if (cloudData.leaveRequests !== undefined) {
-          setLeaveRequests(cloudData.leaveRequests);
-        }
-        if (cloudData.auditLogs !== undefined) {
-          setAuditLogs(cloudData.auditLogs);
-        }
-        if (cloudData.notifications !== undefined) {
-          setDispatchedNotifications(cloudData.notifications);
-        }
-        setIsCloudConnected(true);
+
+        // 2. Attach live real-time bidirectional listeners
+        unsubStaff = firestoreService.subscribeStaff(
+          (staffList) => {
+            if (!isMounted || !staffList || staffList.length === 0) return;
+            setStaffList(staffList);
+            setIsCloudConnected(true);
+          },
+          (err) => console.warn('[AppContext] Real-time staff subscription warning:', err)
+        );
+
+        unsubLeaves = firestoreService.subscribeLeaveRequests(
+          (requests) => {
+            if (!isMounted || !requests) return;
+            setLeaveRequests(requests);
+            setIsCloudConnected(true);
+          },
+          (err) => console.warn('[AppContext] Real-time leaves subscription warning:', err)
+        );
+
+        unsubDepts = firestoreService.subscribeDepartments(
+          (depts) => {
+            if (!isMounted || !depts || depts.length === 0) return;
+            setDepartments(depts);
+          },
+          (err) => console.warn('[AppContext] Real-time departments subscription warning:', err)
+        );
+
+        unsubSettings = firestoreService.subscribeSettings(
+          (settings) => {
+            if (!isMounted || !settings) return;
+            setGlobalThresholds(settings);
+          },
+          (err) => console.warn('[AppContext] Real-time settings subscription warning:', err)
+        );
+
+        unsubAudit = firestoreService.subscribeAuditLogs(
+          (logs) => {
+            if (!isMounted || !logs || logs.length === 0) return;
+            setAuditLogs(logs);
+          },
+          (err) => console.warn('[AppContext] Real-time audit subscription warning:', err)
+        );
+
+        unsubNotifs = firestoreService.subscribeNotifications(
+          (notifs) => {
+            if (!isMounted || !notifs || notifs.length === 0) return;
+            setDispatchedNotifications(notifs);
+          },
+          (err) => console.warn('[AppContext] Real-time notifications subscription warning:', err)
+        );
       })
       .catch((err) => {
         console.warn('[AppContext] Cloud synchronization status:', err);
@@ -327,6 +390,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     return () => {
       isMounted = false;
+      unsubStaff?.();
+      unsubLeaves?.();
+      unsubDepts?.();
+      unsubSettings?.();
+      unsubAudit?.();
+      unsubNotifs?.();
     };
   }, []);
 
@@ -407,6 +476,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       targetId,
     };
     setAuditLogs((prev) => [newEntry, ...prev]);
+    firestoreService.saveAuditLog(newEntry);
   };
 
   // User Authentication & Session Management
@@ -1111,14 +1181,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           if (staff.id === target.staffId) {
             const currentBal = (staff.leaveBalance as any)[balanceKey] ?? (staff.leaveBalance as any)?.earned ?? 0;
             const updatedBal = Math.max(0, currentBal - target.totalDays);
+            const updatedBalance = {
+              ...staff.leaveBalance,
+              [balanceKey]: updatedBal,
+              compensatory: balanceKey === 'compensatory' ? updatedBal : staff.leaveBalance.compensatory,
+              earned: balanceKey === 'compensatory' ? updatedBal : staff.leaveBalance.earned,
+            };
+            firestoreService.updateStaffFields(staff.id, { leaveBalance: updatedBalance });
             return {
               ...staff,
-              leaveBalance: {
-                ...staff.leaveBalance,
-                [balanceKey]: updatedBal,
-                compensatory: balanceKey === 'compensatory' ? updatedBal : staff.leaveBalance.compensatory,
-                earned: balanceKey === 'compensatory' ? updatedBal : staff.leaveBalance.earned,
-              },
+              leaveBalance: updatedBalance,
             };
           }
           return staff;
@@ -1131,14 +1203,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           if (staff.id === target.staffId) {
             const currentBal = (staff.leaveBalance as any)[balanceKey] ?? (staff.leaveBalance as any)?.earned ?? 0;
             const updatedBal = currentBal + target.totalDays;
+            const updatedBalance = {
+              ...staff.leaveBalance,
+              [balanceKey]: updatedBal,
+              compensatory: balanceKey === 'compensatory' ? updatedBal : staff.leaveBalance.compensatory,
+              earned: balanceKey === 'compensatory' ? updatedBal : staff.leaveBalance.earned,
+            };
+            firestoreService.updateStaffFields(staff.id, { leaveBalance: updatedBalance });
             return {
               ...staff,
-              leaveBalance: {
-                ...staff.leaveBalance,
-                [balanceKey]: updatedBal,
-                compensatory: balanceKey === 'compensatory' ? updatedBal : staff.leaveBalance.compensatory,
-                earned: balanceKey === 'compensatory' ? updatedBal : staff.leaveBalance.earned,
-              },
+              leaveBalance: updatedBalance,
             };
           }
           return staff;
@@ -1146,19 +1220,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       );
     }
 
+    const overrideUpdate = {
+      status: newStatus,
+      actionedBy: `${currentUser.name} (Super Admin Override)`,
+      actionedAt: new Date().toISOString(),
+      ...(newStatus === 'Rejected' && reason ? { rejectionReason: reason } : {}),
+    };
+
     setLeaveRequests((prev) =>
       prev.map((req) =>
         req.id === requestId
           ? {
               ...req,
-              status: newStatus,
-              actionedBy: `${currentUser.name} (Super Admin Override)`,
-              actionedAt: new Date().toISOString(),
-              rejectionReason: newStatus === 'Rejected' ? reason : req.rejectionReason,
+              ...overrideUpdate,
             }
           : req
       )
     );
+
+    firestoreService.updateLeaveRequest(requestId, overrideUpdate);
 
     createAuditEntry(
       'ADMIN_OVERRIDE',
@@ -1172,7 +1252,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       mockEmailService.notifyLeaveRejected(target, `${currentUser.name} (Super Admin Override)`, reason);
     }
 
-    addToast('Override Applied', `Status updated to ${newStatus} by Super Admin.`, 'success');
+    addToast('Override Applied', `Status updated to ${newStatus} in Cloud Firestore.`, 'success');
     return { success: true };
   };
 
@@ -1412,14 +1492,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     channel: NotificationChannel;
     subject: string;
     message: string;
+    targetStaffId?: string;
+    department?: string;
   }) => {
+    if (currentUser.role === 'Staff') {
+      throw new Error('Access denied: Staff members cannot dispatch broadcast notices.');
+    }
+
     const result = await notificationService.dispatchCustom(
       params.recipientName,
       params.phone,
       params.email,
       params.channel,
       params.subject,
-      params.message
+      params.message,
+      {
+        staffId: params.targetStaffId,
+        department: params.department,
+        senderId: currentUser.id,
+        senderName: currentUser.name,
+        senderRole: currentUser.role,
+      }
     );
     return result;
   };

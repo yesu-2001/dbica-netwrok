@@ -231,7 +231,7 @@ export const StaffManagementView: React.FC = () => {
               Staff Directory & Roster Administration
             </h2>
             <p className="text-xs text-slate-500">
-              {staffList.length} registered staff members • Authorized role: {currentUser.role}
+              {staffList.length} registered staff members • Real-time Cloud Firestore Synced • Authorized: {currentUser.role}
             </p>
           </div>
         </div>
