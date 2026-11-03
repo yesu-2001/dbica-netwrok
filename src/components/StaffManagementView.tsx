@@ -22,6 +22,11 @@ import {
   RefreshCw,
   Send,
   Check,
+  Share2,
+  MessageCircle,
+  Lock,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import { StaffMember, Role, Department } from '../types';
 
@@ -32,6 +37,7 @@ export const StaffManagementView: React.FC = () => {
     addStaff,
     updateStaff,
     updateStaffBalance,
+    updateStaffPassword,
     updateStaffLeaveThresholds,
     deleteStaff,
     toggleStaffStatus,
@@ -57,9 +63,21 @@ export const StaffManagementView: React.FC = () => {
     staff: StaffMember;
     token: string;
     link: string;
+    directLoginLink: string;
+    password?: string;
   } | null>(null);
   const [copiedToken, setCopiedToken] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
+  const [copiedPass, setCopiedPass] = useState(false);
+  const [copiedAll, setCopiedAll] = useState(false);
+  const [showModalPassword, setShowModalPassword] = useState(false);
+  const [showActivationTokenSection, setShowActivationTokenSection] = useState(false);
+
+  // Add Staff Password States
+  const [formAuthMode, setFormAuthMode] = useState<'instant' | 'invite'>('instant');
+  const [formPassword, setFormPassword] = useState('dbica@2026');
+  const [formMustChangePassword, setFormMustChangePassword] = useState(true);
+  const [showFormPassword, setShowFormPassword] = useState(false);
 
   // Form states
   const [formName, setFormName] = useState('');
@@ -90,7 +108,7 @@ export const StaffManagementView: React.FC = () => {
         <h3 className="text-base font-bold text-slate-900">Access Restricted</h3>
         <p className="text-xs text-slate-500 mt-1 leading-relaxed">
           The Staff Directory and Management portal is accessible only by Super Admin and HR officers.
-          Please switch role to Super Admin or HR in the role switcher.
+          Please sign in with an authorized Super Admin or HR account.
         </p>
       </div>
     );
@@ -123,6 +141,10 @@ export const StaffManagementView: React.FC = () => {
     setFormCasual(globalThresholds.casual);
     setFormSick(globalThresholds.sick);
     setFormEarned(globalThresholds.compensatory ?? globalThresholds.earned);
+    setFormAuthMode('instant');
+    setFormPassword('dbica@2026');
+    setFormMustChangePassword(true);
+    setShowFormPassword(false);
     setFormError(null);
     setIsAddModalOpen(true);
   };
@@ -134,6 +156,8 @@ export const StaffManagementView: React.FC = () => {
       setFormError('Staff name and official email are required.');
       return;
     }
+
+    const chosenPassword = formAuthMode === 'instant' ? (formPassword.trim() || 'dbica@2026') : undefined;
 
     const res = addStaff({
       name: formName.trim(),
@@ -154,47 +178,53 @@ export const StaffManagementView: React.FC = () => {
         earned: Number(formEarned) || globalThresholds.earned,
         compensatory: Number(formEarned) || (globalThresholds.compensatory ?? globalThresholds.earned),
       },
+      portalPassword: chosenPassword,
+      mustChangePassword: formMustChangePassword,
       status: 'Active',
       joinedDate: new Date().toISOString().split('T')[0],
     });
 
-    if (res.success && res.newStaff && res.activationLink) {
+    if (res.success && res.newStaff) {
       setIsAddModalOpen(false);
       setInvitationModalData({
         staff: res.newStaff,
         token: res.activationToken || res.newStaff.activationToken || '',
-        link: res.activationLink,
+        link: res.activationLink || `${window.location.origin}/#login?email=${encodeURIComponent(res.newStaff.email)}`,
+        directLoginLink: res.directLoginLink || `${window.location.origin}/#login?email=${encodeURIComponent(res.newStaff.email)}`,
+        password: res.initialPassword || chosenPassword || 'dbica@2026',
       });
       setCopiedLink(false);
       setCopiedToken(false);
-    } else if (res.success) {
-      setIsAddModalOpen(false);
+      setCopiedPass(false);
+      setCopiedAll(false);
+      setShowModalPassword(false);
+      setShowActivationTokenSection(false);
     } else {
       setFormError(res.error || 'Failed to add staff member.');
     }
   };
 
-  // Open or Resend Onboarding Invitation Modal
+  // Open or Resend Onboarding Invitation & Credentials Modal
   const handleOpenInviteModal = (staff: StaffMember) => {
     setCopiedLink(false);
     setCopiedToken(false);
-    if (staff.activationToken) {
-      const link = `${window.location.origin}/#activate?token=${staff.activationToken}&email=${encodeURIComponent(staff.email)}`;
-      setInvitationModalData({
-        staff,
-        token: staff.activationToken,
-        link,
-      });
-    } else {
-      const res = resendActivationInvite(staff.id);
-      if (res.success && res.inviteLink && res.token) {
-        setInvitationModalData({
-          staff,
-          token: res.token,
-          link: res.inviteLink,
-        });
-      }
-    }
+    setCopiedPass(false);
+    setCopiedAll(false);
+    setShowModalPassword(false);
+    setShowActivationTokenSection(false);
+
+    const directLoginLink = `${window.location.origin}/#login?email=${encodeURIComponent(staff.email)}`;
+    const link = staff.activationToken
+      ? `${window.location.origin}/#activate?token=${staff.activationToken}&email=${encodeURIComponent(staff.email)}`
+      : directLoginLink;
+
+    setInvitationModalData({
+      staff,
+      token: staff.activationToken || 'N/A',
+      link,
+      directLoginLink,
+      password: staff.portalPassword || 'dbica@2026',
+    });
   };
 
   // Handle Edit Submit
@@ -471,17 +501,15 @@ export const StaffManagementView: React.FC = () => {
                     {/* Actions */}
                     <td className="py-3.5 px-4 text-right">
                       <div className="flex items-center justify-end gap-1.5">
-                        {/* If invited, show Invite Link & Token modal trigger */}
-                        {staff.accountStatus === 'invited' && (
-                          <button
-                            type="button"
-                            onClick={() => handleOpenInviteModal(staff)}
-                            className="p-1.5 text-amber-600 hover:text-amber-800 hover:bg-amber-50 rounded-lg transition-colors cursor-pointer"
-                            title="View One-Time Activation Token & Onboarding Link"
-                          >
-                            <Key className="w-3.5 h-3.5" />
-                          </button>
-                        )}
+                        {/* Super Admin & HR: Share Credentials & Direct Login Link (Available for all staff) */}
+                        <button
+                          type="button"
+                          onClick={() => handleOpenInviteModal(staff)}
+                          className="p-1.5 text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
+                          title="Share Login Credentials, WhatsApp Message & Direct Portal Link"
+                        >
+                          <Share2 className="w-3.5 h-3.5" />
+                        </button>
 
                         {/* Super Admin Safeguard: Suspend / Reactivate */}
                         {isSuperAdmin && staff.id !== currentUser.id && staff.role !== 'Super Admin' && (
@@ -734,6 +762,91 @@ export const StaffManagementView: React.FC = () => {
                 </div>
               </div>
 
+              {/* Account Access & Initial Password Setup */}
+              <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <span className="font-semibold text-slate-800 text-xs flex items-center gap-1.5">
+                    <Key className="w-4 h-4 text-amber-600" />
+                    <span>Portal Access &amp; Password</span>
+                  </span>
+                  <div className="flex items-center gap-1 bg-white border border-slate-200 rounded-lg p-0.5 text-[11px]">
+                    <button
+                      type="button"
+                      onClick={() => setFormAuthMode('instant')}
+                      className={`px-2.5 py-1 rounded-md font-semibold transition-colors cursor-pointer ${
+                        formAuthMode === 'instant'
+                          ? 'bg-[#0F5C97] text-white shadow-xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      Instant Temporary Password
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setFormAuthMode('invite')}
+                      className={`px-2.5 py-1 rounded-md font-semibold transition-colors cursor-pointer ${
+                        formAuthMode === 'invite'
+                          ? 'bg-[#0F5C97] text-white shadow-xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      Self-Setup Link
+                    </button>
+                  </div>
+                </div>
+
+                {formAuthMode === 'instant' ? (
+                  <div className="space-y-2.5">
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-[11px] font-semibold text-slate-700">
+                          Initial Password *
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => setFormPassword(`Dbica@${Math.floor(1000 + Math.random() * 9000)}`)}
+                          className="text-[10.5px] text-[#0F5C97] hover:underline font-medium cursor-pointer"
+                        >
+                          Generate Random
+                        </button>
+                      </div>
+                      <div className="relative">
+                        <input
+                          type={showFormPassword ? 'text' : 'password'}
+                          value={formPassword}
+                          onChange={(e) => setFormPassword(e.target.value)}
+                          placeholder="e.g. dbica@2026"
+                          className="w-full px-3 py-1.5 pr-10 border border-slate-300 rounded-lg text-xs bg-white font-mono"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowFormPassword(!showFormPassword)}
+                          className="absolute inset-y-0 right-0 pr-2.5 flex items-center text-slate-400 hover:text-slate-600 cursor-pointer"
+                        >
+                          {showFormPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                        </button>
+                      </div>
+                    </div>
+                    <label className="flex items-center gap-2 cursor-pointer text-[11px] text-slate-600">
+                      <input
+                        type="checkbox"
+                        checked={formMustChangePassword}
+                        onChange={(e) => setFormMustChangePassword(e.target.checked)}
+                        className="rounded text-[#0F5C97]"
+                      />
+                      <span>Prompt staff member to personalize their password on first login</span>
+                    </label>
+                    <p className="text-[10.5px] text-slate-500 leading-relaxed">
+                      Staff can log in immediately with their email and this password, or via the 1-click link generated upon submission.
+                    </p>
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-slate-600 leading-relaxed">
+                    A secure, one-time activation link and token will be generated. The staff member will use the link to establish their private password.
+                  </p>
+                )}
+              </div>
+
               <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
                 <button
                   type="button"
@@ -747,7 +860,7 @@ export const StaffManagementView: React.FC = () => {
                   className="px-4 py-2 font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow-sm shadow-blue-600/30 flex items-center gap-1.5 cursor-pointer"
                 >
                   <UserPlus className="w-4 h-4" />
-                  <span>Onboard &amp; Issue Activation Invite</span>
+                  <span>Onboard &amp; Generate Access Slip</span>
                 </button>
               </div>
             </form>
@@ -755,112 +868,276 @@ export const StaffManagementView: React.FC = () => {
         </div>
       )}
 
-      {/* Onboarding Invitation Modal (Staff First-Time Account Setup) */}
+      {/* Staff Login Credentials & Share Slip Modal */}
       {invitationModalData && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 backdrop-blur-xs p-4 overflow-y-auto">
-          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95 my-8 text-left">
+          <div className="bg-white rounded-2xl max-w-xl w-full p-6 shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95 my-8 text-left">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <div className="flex items-center gap-2 text-amber-600">
-                <Key className="w-5 h-5" />
-                <h3 className="text-base font-bold text-slate-900">Onboarding Invitation &amp; Token</h3>
+              <div className="flex items-center gap-2 text-[#0F5C97]">
+                <Key className="w-5 h-5 text-amber-600" />
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">Staff Login Credentials &amp; Share Slip</h3>
+                  <p className="text-[11px] text-slate-500">Ready to share directly with the staff member via WhatsApp, Email, or SMS</p>
+                </div>
               </div>
               <button
                 type="button"
                 onClick={() => setInvitationModalData(null)}
-                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100"
+                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
             <div className="mt-4 space-y-4 text-xs text-slate-700">
-              <div className="p-3 bg-amber-50/80 border border-amber-200 rounded-xl">
-                <p className="font-semibold text-amber-900">
-                  Staff Profile Created: {invitationModalData.staff.name}
-                </p>
-                <p className="text-[11.5px] text-amber-800 mt-0.5">
-                  {invitationModalData.staff.email} • {invitationModalData.staff.role} ({invitationModalData.staff.department})
-                </p>
-              </div>
-
-              {/* Safeguarding Explanation */}
-              <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-1">
-                <div className="flex items-center gap-1.5 font-bold text-slate-800">
-                  <ShieldCheck className="w-4 h-4 text-emerald-600" />
-                  <span>Why isn't a password created by Admin?</span>
-                </div>
-                <p className="text-[11px] text-slate-600 leading-relaxed">
-                  In compliance with enterprise security and non-repudiation safeguarding, administrators should never hold or transmit employee passwords. Instead, share this one-time activation link or token so the employee sets their own private password.
-                </p>
-              </div>
-
-              {/* Activation Token */}
-              <div>
-                <label className="block font-semibold text-slate-700 mb-1">
-                  One-Time Activation Token (Valid 7 days)
-                </label>
-                <div className="flex items-center gap-2">
-                  <div className="flex-1 px-3 py-2 bg-slate-100 rounded-xl font-mono text-sm font-bold text-slate-900 border border-slate-200 select-all">
-                    {invitationModalData.token}
+              {/* Staff Profile Header Card */}
+              <div className="p-3.5 bg-gradient-to-r from-slate-50 to-blue-50/50 border border-slate-200 rounded-xl flex items-center justify-between flex-wrap gap-2">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold text-slate-900 text-sm">{invitationModalData.staff.name}</span>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-800">
+                      {invitationModalData.staff.role}
+                    </span>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      navigator.clipboard.writeText(invitationModalData.token);
-                      setCopiedToken(true);
-                      setTimeout(() => setCopiedToken(false), 2000);
-                      addToast('Token Copied', 'Activation token copied to clipboard', 'success');
-                    }}
-                    className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-medium flex items-center gap-1 cursor-pointer"
-                  >
-                    {copiedToken ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                    <span>{copiedToken ? 'Copied' : 'Copy Token'}</span>
-                  </button>
+                  <p className="text-[11.5px] text-slate-600 mt-0.5">
+                    {invitationModalData.staff.designation} • {invitationModalData.staff.department}
+                  </p>
+                </div>
+                <div className="text-right">
+                  <span className="text-[10.5px] text-slate-400 block">Staff ID</span>
+                  <span className="font-mono font-bold text-slate-900 text-xs">{invitationModalData.staff.id}</span>
                 </div>
               </div>
 
-              {/* Full Activation Link */}
-              <div>
-                <label className="block font-semibold text-slate-700 mb-1">
-                  Direct Employee Onboarding Link
-                </label>
+              {/* 1-Click Direct Login Link (Primary Feature) */}
+              <div className="p-3 bg-blue-50/70 border border-blue-200 rounded-xl space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="font-bold text-blue-950 flex items-center gap-1.5 text-xs">
+                    <ExternalLink className="w-4 h-4 text-blue-700" />
+                    <span>Direct 1-Click Login Link (Email Pre-filled)</span>
+                  </label>
+                  <span className="text-[10.5px] text-blue-700 font-medium bg-blue-100/70 px-2 py-0.5 rounded">
+                    Easiest for Staff
+                  </span>
+                </div>
+                <p className="text-[11px] text-blue-900/80 leading-relaxed">
+                  When the staff member clicks this link, the login screen automatically opens with their email filled in so they only enter their password!
+                </p>
                 <div className="flex items-center gap-2">
                   <input
                     type="text"
                     readOnly
-                    value={invitationModalData.link}
-                    className="flex-1 px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-600 select-all"
+                    value={invitationModalData.directLoginLink}
+                    className="flex-1 px-3 py-2 bg-white border border-blue-200 rounded-xl text-xs text-blue-950 font-mono select-all"
                   />
                   <button
                     type="button"
                     onClick={() => {
-                      navigator.clipboard.writeText(invitationModalData.link);
+                      navigator.clipboard.writeText(invitationModalData.directLoginLink);
                       setCopiedLink(true);
                       setTimeout(() => setCopiedLink(false), 2000);
-                      addToast('Link Copied', 'Onboarding invitation link copied to clipboard', 'success');
+                      addToast('Direct Link Copied', '1-Click login link copied to clipboard.', 'success');
                     }}
-                    className="px-3 py-2 rounded-xl bg-[#0F5C97] hover:bg-[#0c4b7b] text-white font-medium flex items-center gap-1 cursor-pointer"
+                    className="px-3 py-2 rounded-xl bg-[#0F5C97] hover:bg-[#0c4b7b] text-white font-semibold flex items-center gap-1 cursor-pointer shrink-0"
                   >
-                    {copiedLink ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                    {copiedLink ? <Check className="w-3.5 h-3.5 text-emerald-300" /> : <Copy className="w-3.5 h-3.5" />}
                     <span>{copiedLink ? 'Copied' : 'Copy Link'}</span>
                   </button>
+                  <a
+                    href={invitationModalData.directLoginLink}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-3 py-2 rounded-xl bg-white border border-blue-300 text-blue-700 hover:bg-blue-50 font-semibold flex items-center gap-1 cursor-pointer shrink-0"
+                    title="Open in new window to verify"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                    <span>Open</span>
+                  </a>
                 </div>
               </div>
 
-              {/* Modal Actions */}
-              <div className="pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
+              {/* Login Credentials Breakdown */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {/* Email Identifier */}
+                <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-1">
+                  <span className="text-[10.5px] uppercase font-bold tracking-wider text-slate-500 block">
+                    Login Email
+                  </span>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-semibold text-slate-900 truncate font-mono text-xs">
+                      {invitationModalData.staff.email}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(invitationModalData.staff.email);
+                        addToast('Email Copied', 'Staff email copied to clipboard.', 'info');
+                      }}
+                      className="p-1 text-slate-500 hover:text-slate-800 hover:bg-slate-200 rounded cursor-pointer shrink-0"
+                      title="Copy Email"
+                    >
+                      <Copy className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Password Box */}
+                <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10.5px] uppercase font-bold tracking-wider text-slate-500 block">
+                      Portal Password
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setShowModalPassword(!showModalPassword)}
+                      className="text-[10.5px] text-[#0F5C97] hover:underline flex items-center gap-1 cursor-pointer"
+                    >
+                      {showModalPassword ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                      <span>{showModalPassword ? 'Hide' : 'Show'}</span>
+                    </button>
+                  </div>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-mono font-bold text-slate-900 text-xs">
+                      {showModalPassword ? (invitationModalData.password || 'dbica@2026') : '••••••••••••'}
+                    </span>
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const pass = invitationModalData.password || 'dbica@2026';
+                          navigator.clipboard.writeText(pass);
+                          setCopiedPass(true);
+                          setTimeout(() => setCopiedPass(false), 2000);
+                          addToast('Password Copied', 'Password copied to clipboard.', 'info');
+                        }}
+                        className="p-1 text-slate-500 hover:text-slate-800 hover:bg-slate-200 rounded cursor-pointer shrink-0"
+                        title="Copy Password"
+                      >
+                        {copiedPass ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Instant 1-Click Sharing Center */}
+              <div className="p-3.5 bg-slate-900 text-white rounded-xl space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold flex items-center gap-1.5 text-white">
+                    <Send className="w-4 h-4 text-emerald-400" />
+                    <span>Instant Share with {invitationModalData.staff.name.split(' ')[0]}</span>
+                  </span>
+                  <span className="text-[10.5px] text-slate-400">Pre-formatted slip</span>
+                </div>
+
+                {(() => {
+                  const pass = invitationModalData.password || 'dbica@2026';
+                  const shareText = `🏛️ *Don Bosco Institute of Communication Arts (DBICA)*\n*Staff Leave Portal - Account Credentials*\n\nDear ${invitationModalData.staff.name},\nYour staff leave management portal account has been configured.\n\n🔗 *Direct Login Link (1-Click):*\n${invitationModalData.directLoginLink}\n\n👤 *Login Email:* ${invitationModalData.staff.email}\n🆔 *Staff ID:* ${invitationModalData.staff.id}\n🔑 *Temporary Password:* ${pass}\n\nPlease click the link above to sign in and submit or review leave requests.`;
+                  const cleanPhone = (invitationModalData.staff.phone || '').replace(/[^0-9]/g, '');
+                  const waUrl = cleanPhone.length >= 10
+                    ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(shareText)}`
+                    : `https://wa.me/?text=${encodeURIComponent(shareText)}`;
+                  const mailtoUrl = `mailto:${invitationModalData.staff.email}?subject=${encodeURIComponent('DBICA Staff Portal - Your Login Credentials')}&body=${encodeURIComponent(shareText)}`;
+
+                  return (
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
+                      {/* WhatsApp Share */}
+                      <a
+                        href={waUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="py-2.5 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs flex items-center justify-center gap-1.5 transition-colors text-center shadow-xs cursor-pointer"
+                      >
+                        <MessageCircle className="w-4 h-4" />
+                        <span>Send WhatsApp</span>
+                      </a>
+
+                      {/* Email Share */}
+                      <a
+                        href={mailtoUrl}
+                        className="py-2.5 px-3 rounded-lg bg-sky-600 hover:bg-sky-500 text-white font-semibold text-xs flex items-center justify-center gap-1.5 transition-colors text-center shadow-xs cursor-pointer"
+                      >
+                        <Mail className="w-4 h-4" />
+                        <span>Send Email</span>
+                      </a>
+
+                      {/* Copy All Slip */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          navigator.clipboard.writeText(shareText);
+                          setCopiedAll(true);
+                          setTimeout(() => setCopiedAll(false), 2000);
+                          addToast('Welcome Slip Copied', 'Full WhatsApp / Email slip copied to clipboard!', 'success');
+                        }}
+                        className="py-2.5 px-3 rounded-lg bg-slate-800 hover:bg-slate-700 text-white font-semibold text-xs flex items-center justify-center gap-1.5 transition-colors text-center border border-slate-700 cursor-pointer"
+                      >
+                        {copiedAll ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+                        <span>{copiedAll ? 'Slip Copied!' : 'Copy Full Slip'}</span>
+                      </button>
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {/* Collapsible Alternative: Self-Service Activation Token */}
+              <div className="pt-2 border-t border-slate-100">
                 <button
                   type="button"
-                  onClick={() => {
-                    navigator.clipboard.writeText(invitationModalData.link);
-                    addToast('Activation Link Ready', 'Link copied! You can test it by logging out and opening the activation page.', 'info');
-                  }}
-                  className="px-3 py-2 rounded-xl border border-slate-200 text-slate-700 hover:bg-slate-50 font-medium text-xs flex items-center gap-1.5 cursor-pointer"
+                  onClick={() => setShowActivationTokenSection(!showActivationTokenSection)}
+                  className="text-[11px] text-slate-500 hover:text-slate-800 flex items-center gap-1.5 cursor-pointer font-medium"
                 >
-                  <ExternalLink className="w-3.5 h-3.5" />
-                  <span>Copy &amp; Test Onboarding Flow</span>
+                  <Key className="w-3.5 h-3.5 text-slate-400" />
+                  <span>{showActivationTokenSection ? 'Hide' : 'Show'} Advanced Self-Service Activation Token</span>
                 </button>
 
+                {showActivationTokenSection && (
+                  <div className="mt-2.5 p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
+                    <p className="text-[11px] text-slate-600">
+                      If your institution requires staff to establish their own password via zero-knowledge invite link:
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <div className="flex-1 px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg font-mono font-bold text-slate-800 text-xs select-all">
+                        {invitationModalData.token || 'N/A'}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          navigator.clipboard.writeText(invitationModalData.token);
+                          addToast('Token Copied', 'Activation token copied.', 'info');
+                        }}
+                        className="px-2.5 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded-lg text-xs font-semibold cursor-pointer"
+                      >
+                        Copy Token
+                      </button>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        readOnly
+                        value={invitationModalData.link}
+                        className="flex-1 px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs text-slate-600 select-all"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          navigator.clipboard.writeText(invitationModalData.link);
+                          addToast('Link Copied', 'Activation link copied.', 'info');
+                        }}
+                        className="px-2.5 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded-lg text-xs font-semibold cursor-pointer"
+                      >
+                        Copy Link
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Modal Footer */}
+              <div className="pt-3 border-t border-slate-100 flex items-center justify-between">
+                <span className="text-[11px] text-slate-400">
+                  Staff member can log in at any time with these credentials.
+                </span>
                 <button
                   type="button"
                   onClick={() => setInvitationModalData(null)}

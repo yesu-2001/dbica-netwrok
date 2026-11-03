@@ -105,6 +105,63 @@ export class FirestoreService {
   }
 
   /**
+   * Purges all sample mock data (David Anthony upcoming leaves, Kavitha Raman, Theresa, test audit logs)
+   * from the live Cloud Firestore database so the application runs on a 100% clean production slate.
+   */
+  async purgeLegacyMockData(): Promise<void> {
+    try {
+      const mockLeaveIds = ['req-001', 'req-002'];
+      const mockStaffIds = ['dbica-002', 'dbica-003', 'dbica-004'];
+      const mockAuditIds = ['audit-001'];
+
+      // 1. Delete mock leave requests
+      for (const reqId of mockLeaveIds) {
+        try {
+          await deleteDoc(doc(db, COLLECTIONS.LEAVE_REQUESTS, reqId));
+        } catch {
+          // Ignore if already deleted
+        }
+      }
+
+      // Check and delete any remaining leaves matching mock staff names or IDs
+      const reqSnap = await getDocs(collection(db, COLLECTIONS.LEAVE_REQUESTS));
+      for (const d of reqSnap.docs) {
+        const data = d.data();
+        if (
+          mockLeaveIds.includes(d.id) ||
+          mockStaffIds.includes(data.staffId) ||
+          data.staffName === 'David Anthony' ||
+          data.staffName === 'Kavitha Raman'
+        ) {
+          try {
+            await deleteDoc(doc(db, COLLECTIONS.LEAVE_REQUESTS, d.id));
+            console.info(`[Firestore] Purged sample leave request: ${d.id}`);
+          } catch {}
+        }
+      }
+
+      // 2. Delete mock staff members from Firestore
+      for (const staffId of mockStaffIds) {
+        try {
+          await deleteDoc(doc(db, COLLECTIONS.STAFF, staffId));
+          console.info(`[Firestore] Purged sample staff member: ${staffId}`);
+        } catch {}
+      }
+
+      // 3. Delete mock audit logs
+      for (const auditId of mockAuditIds) {
+        try {
+          await deleteDoc(doc(db, COLLECTIONS.AUDIT_LOGS, auditId));
+        } catch {}
+      }
+
+      console.info('[Firestore] Legacy mock data purge completed cleanly.');
+    } catch (err) {
+      console.warn('[Firestore] Error during legacy mock data purge:', err);
+    }
+  }
+
+  /**
    * Loads all core collections from Firestore
    */
   async loadAllData(): Promise<{
@@ -118,9 +175,18 @@ export class FirestoreService {
     try {
       await this.seedIfEmpty();
 
+      // Purge legacy sample data in live Firestore if present
+      await this.purgeLegacyMockData();
+
       // Fetch Staff
       const staffSnap = await getDocs(collection(db, COLLECTIONS.STAFF));
-      const staffList = staffSnap.docs.map((d) => d.data() as StaffMember);
+      const rawStaffList = staffSnap.docs.map((d) => d.data() as StaffMember);
+      const staffList = rawStaffList.filter(
+        (s) =>
+          !['dbica-002', 'dbica-003', 'dbica-004'].includes(s.id) &&
+          s.name !== 'David Anthony' &&
+          s.name !== 'Kavitha Raman'
+      );
 
       // Fetch Departments
       const deptSnap = await getDocs(collection(db, COLLECTIONS.DEPARTMENTS));
@@ -134,13 +200,21 @@ export class FirestoreService {
 
       // Fetch Leave Requests
       const reqSnap = await getDocs(collection(db, COLLECTIONS.LEAVE_REQUESTS));
-      const leaveRequests = reqSnap.docs.map((d) => d.data() as LeaveRequest);
+      const rawLeaveRequests = reqSnap.docs.map((d) => d.data() as LeaveRequest);
+      const leaveRequests = rawLeaveRequests.filter(
+        (r) =>
+          !['req-001', 'req-002'].includes(r.id) &&
+          r.staffName !== 'David Anthony' &&
+          r.staffName !== 'Kavitha Raman' &&
+          !['dbica-002', 'dbica-003', 'dbica-004'].includes(r.staffId)
+      );
 
       // Fetch Audit Logs
       const auditSnap = await getDocs(
         query(collection(db, COLLECTIONS.AUDIT_LOGS), orderBy('timestamp', 'desc'), limit(150))
       );
-      const auditLogs = auditSnap.docs.map((d) => d.data() as AuditLog);
+      const rawAuditLogs = auditSnap.docs.map((d) => d.data() as AuditLog);
+      const auditLogs = rawAuditLogs.filter((a) => a.id !== 'audit-001');
 
       // Fetch Dispatched Notifications
       const notifSnap = await getDocs(
@@ -171,7 +245,14 @@ export class FirestoreService {
     return onSnapshot(
       collection(db, COLLECTIONS.STAFF),
       (snap) => {
-        const staff = snap.docs.map((d) => d.data() as StaffMember);
+        const staff = snap.docs
+          .map((d) => d.data() as StaffMember)
+          .filter(
+            (s) =>
+              !['dbica-002', 'dbica-003', 'dbica-004'].includes(s.id) &&
+              s.name !== 'David Anthony' &&
+              s.name !== 'Kavitha Raman'
+          );
         onData(staff);
       },
       (err) => {
@@ -188,7 +269,15 @@ export class FirestoreService {
     return onSnapshot(
       collection(db, COLLECTIONS.LEAVE_REQUESTS),
       (snap) => {
-        const requests = snap.docs.map((d) => d.data() as LeaveRequest);
+        const requests = snap.docs
+          .map((d) => d.data() as LeaveRequest)
+          .filter(
+            (r) =>
+              !['req-001', 'req-002'].includes(r.id) &&
+              r.staffName !== 'David Anthony' &&
+              r.staffName !== 'Kavitha Raman' &&
+              !['dbica-002', 'dbica-003', 'dbica-004'].includes(r.staffId)
+          );
         onData(requests);
       },
       (err) => {

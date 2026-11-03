@@ -514,8 +514,14 @@ export const OverviewView: React.FC<{ onApplyLeave: () => void }> = ({ onApplyLe
 
             <div className="mt-3 divide-y divide-slate-100 text-xs">
               {leaveRequests.filter((r) => r.status === 'Approved' && r.startDate >= todayStr).length === 0 ? (
-                <div className="py-6 text-center text-slate-400 text-xs">
-                  No upcoming approved leaves scheduled.
+                <div className="py-7 text-center text-slate-400 text-xs space-y-1.5">
+                  <div className="w-8 h-8 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto">
+                    <CheckCircle className="w-4 h-4" />
+                  </div>
+                  <p className="font-semibold text-slate-700">No Upcoming Staff Leaves</p>
+                  <p className="text-[11px] text-slate-400 max-w-xs mx-auto">
+                    Full faculty presence. Scheduled leaves will display here automatically.
+                  </p>
                 </div>
               ) : (
                 leaveRequests

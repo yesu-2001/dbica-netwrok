@@ -14,17 +14,43 @@ import {
 import { getAuth } from 'firebase/auth';
 import firebaseConfig from '../../firebase-applet-config.json';
 
+function resolveConfigValue(envVal?: string, jsonVal?: string): string {
+  if (envVal && !envVal.startsWith('${') && !envVal.startsWith('process.env')) return envVal;
+  if (jsonVal && !jsonVal.startsWith('${') && !jsonVal.startsWith('process.env')) return jsonVal;
+  return envVal || jsonVal || '';
+}
+
+// Active Firebase Configuration (Supports VITE_ environment variables with fallback to firebase-applet-config.json)
+export const activeFirebaseConfig = {
+  projectId: resolveConfigValue(import.meta.env.VITE_FIREBASE_PROJECT_ID, firebaseConfig.projectId),
+  appId: resolveConfigValue(import.meta.env.VITE_FIREBASE_APP_ID, firebaseConfig.appId),
+  apiKey: resolveConfigValue(import.meta.env.VITE_FIREBASE_API_KEY, firebaseConfig.apiKey),
+  authDomain: resolveConfigValue(import.meta.env.VITE_FIREBASE_AUTH_DOMAIN, firebaseConfig.authDomain),
+  firestoreDatabaseId: resolveConfigValue(import.meta.env.VITE_FIREBASE_DATABASE_ID, firebaseConfig.firestoreDatabaseId),
+  storageBucket: resolveConfigValue(import.meta.env.VITE_FIREBASE_STORAGE_BUCKET, firebaseConfig.storageBucket),
+  messagingSenderId: resolveConfigValue(import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID, firebaseConfig.messagingSenderId),
+  measurementId: resolveConfigValue(import.meta.env.VITE_FIREBASE_MEASUREMENT_ID, firebaseConfig.measurementId),
+};
+
 // Initialize Firebase App
-const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
+const app = !getApps().length ? initializeApp(activeFirebaseConfig) : getApp();
 
 // Initialize Firestore with specific database ID if provided in config
+const dbId = activeFirebaseConfig.firestoreDatabaseId;
 export const db: Firestore =
-  firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId !== '(default)'
-    ? getFirestore(app, firebaseConfig.firestoreDatabaseId)
+  dbId && dbId !== '(default)'
+    ? getFirestore(app, dbId)
     : getFirestore(app);
 
 // Initialize Firebase Authentication
 export const auth = getAuth(app);
+export {
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  signOut,
+  onAuthStateChanged,
+  sendPasswordResetEmail,
+} from 'firebase/auth';
 
 // Required connection test as per Firebase Integration Skill
 export async function testFirestoreConnection(): Promise<boolean> {
