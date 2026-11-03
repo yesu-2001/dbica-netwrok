@@ -6,3 +6,4 @@ firebase-applet-config.json
 .DS_Store
 *.log
 .env*
+!.env.example

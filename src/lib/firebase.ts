@@ -18,24 +18,29 @@ import {
   signInWithEmailAndPassword as signInToProvisioningAuth,
   signOut as signOutFromProvisioningAuth,
 } from 'firebase/auth';
-import firebaseConfig from '../../firebase-applet-config.json';
+const requiredFirebaseConfig = {
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+};
 
-function resolveConfigValue(envVal?: string, jsonVal?: string): string {
-  if (envVal && !envVal.startsWith('${') && !envVal.startsWith('process.env')) return envVal;
-  if (jsonVal && !jsonVal.startsWith('${') && !jsonVal.startsWith('process.env')) return jsonVal;
-  return envVal || jsonVal || '';
+const missingFirebaseConfig = Object.entries(requiredFirebaseConfig)
+  .filter(([, value]) => !value)
+  .map(([key]) => key);
+
+if (missingFirebaseConfig.length > 0) {
+  throw new Error(
+    `Missing Firebase configuration: ${missingFirebaseConfig.join(', ')}. Set the VITE_FIREBASE_* environment variables before building or running the app.`
+  );
 }
 
-// Active Firebase Configuration (Supports VITE_ environment variables with fallback to firebase-applet-config.json)
 export const activeFirebaseConfig = {
-  projectId: resolveConfigValue(import.meta.env.VITE_FIREBASE_PROJECT_ID, firebaseConfig.projectId),
-  appId: resolveConfigValue(import.meta.env.VITE_FIREBASE_APP_ID, firebaseConfig.appId),
-  apiKey: resolveConfigValue(import.meta.env.VITE_FIREBASE_API_KEY, firebaseConfig.apiKey),
-  authDomain: resolveConfigValue(import.meta.env.VITE_FIREBASE_AUTH_DOMAIN, firebaseConfig.authDomain),
-  firestoreDatabaseId: resolveConfigValue(import.meta.env.VITE_FIREBASE_DATABASE_ID, firebaseConfig.firestoreDatabaseId),
-  storageBucket: resolveConfigValue(import.meta.env.VITE_FIREBASE_STORAGE_BUCKET, firebaseConfig.storageBucket),
-  messagingSenderId: resolveConfigValue(import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID, firebaseConfig.messagingSenderId),
-  measurementId: resolveConfigValue(import.meta.env.VITE_FIREBASE_MEASUREMENT_ID, firebaseConfig.measurementId),
+  ...requiredFirebaseConfig,
+  firestoreDatabaseId: import.meta.env.VITE_FIREBASE_DATABASE_ID || '(default)',
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID,
 };
 
 // Initialize Firebase App
