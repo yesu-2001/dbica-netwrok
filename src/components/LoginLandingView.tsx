@@ -81,7 +81,7 @@ export const LoginLandingView: React.FC = () => {
   } = useApp();
 
   // Primary Tab State
-  const [activeTab, setActiveTab] = useState<'form' | 'activate' | 'forgot' | 'presets'>('form');
+  const [activeTab, setActiveTab] = useState<'form' | 'activate' | 'forgot'>('form');
 
   // Sign In Form State
   const [identifier, setIdentifier] = useState('');
@@ -112,7 +112,6 @@ export const LoginLandingView: React.FC = () => {
   // Modals
   const [showPolicyModal, setShowPolicyModal] = useState(false);
   const [showHelpModal, setShowHelpModal] = useState(false);
-  const [showRosterModal, setShowRosterModal] = useState(false);
 
   // Auto-detect URL activation parameter (#activate?token=...&email=...)
   useEffect(() => {
@@ -248,13 +247,6 @@ export const LoginLandingView: React.FC = () => {
     }, 400);
   };
 
-  // Quick fill helper for existing active profiles
-  const handleQuickFill = (email: string) => {
-    setIdentifier(email);
-    setPassword('dbica@2026');
-    setErrorMsg(null);
-  };
-
   return (
     <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col selection:bg-[#0F5C97] selection:text-white relative overflow-x-hidden font-sans">
       {/* Decorative ambient gradients */}
@@ -304,16 +296,6 @@ export const LoginLandingView: React.FC = () => {
               <FileText className="w-3.5 h-3.5 text-sky-400" />
               <span className="hidden md:inline">Leave Policy</span>
               <span className="md:hidden">Policy</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setShowRosterModal(true)}
-              className="px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-800/80 hover:bg-slate-700/80 text-slate-300 hover:text-white transition flex items-center gap-1.5 font-medium"
-            >
-              <Users className="w-3.5 h-3.5 text-emerald-400" />
-              <span className="hidden md:inline">Demo Roster</span>
-              <span className="md:hidden">Roster</span>
             </button>
 
             <button
@@ -447,8 +429,8 @@ export const LoginLandingView: React.FC = () => {
                   Sign in to access your dashboard, requests &amp; leave quota
                 </p>
 
-                {/* Switch Between Sign In, First-Time Activation, and Roles */}
-                <div className="grid grid-cols-3 gap-1 p-1 bg-slate-950/80 border border-slate-800 rounded-xl mt-4 w-full text-xs font-semibold">
+                {/* Switch Between Sign In and First-Time Activation */}
+                <div className="grid grid-cols-2 gap-1.5 p-1 bg-slate-950/80 border border-slate-800 rounded-xl mt-4 w-full text-xs font-semibold">
                   <button
                     type="button"
                     onClick={() => {
@@ -456,14 +438,14 @@ export const LoginLandingView: React.FC = () => {
                       setErrorMsg(null);
                       setSuccessMsg(null);
                     }}
-                    className={`py-1.5 px-2 rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+                    className={`py-2 px-3 rounded-lg transition-all flex items-center justify-center gap-1.5 ${
                       activeTab === 'form' || activeTab === 'forgot'
                         ? 'bg-[#0F5C97] text-white shadow'
                         : 'text-slate-400 hover:text-white'
                     }`}
                   >
                     <LogIn className="w-3.5 h-3.5 shrink-0" />
-                    <span>Sign In</span>
+                    <span>Staff Sign In</span>
                   </button>
 
                   <button
@@ -473,32 +455,14 @@ export const LoginLandingView: React.FC = () => {
                       setErrorMsg(null);
                       setSuccessMsg(null);
                     }}
-                    className={`py-1.5 px-2 rounded-lg transition-all flex items-center justify-center gap-1.5 relative ${
+                    className={`py-2 px-3 rounded-lg transition-all flex items-center justify-center gap-1.5 relative ${
                       activeTab === 'activate'
                         ? 'bg-[#0F5C97] text-white shadow'
                         : 'text-slate-400 hover:text-white'
                     }`}
                   >
                     <Key className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                    <span>Activate</span>
-                    <span className="hidden sm:inline text-[9px] px-1 py-0.2 rounded-full bg-amber-500/30 text-amber-300 font-bold">New</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setActiveTab('presets');
-                      setErrorMsg(null);
-                      setSuccessMsg(null);
-                    }}
-                    className={`py-1.5 px-2 rounded-lg transition-all flex items-center justify-center gap-1.5 ${
-                      activeTab === 'presets'
-                        ? 'bg-[#0F5C97] text-white shadow'
-                        : 'text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    <Sparkles className="w-3.5 h-3.5 text-emerald-300 shrink-0" />
-                    <span>1-Click Roles</span>
+                    <span>Activate Account</span>
                   </button>
                 </div>
               </div>
@@ -658,22 +622,6 @@ export const LoginLandingView: React.FC = () => {
                         </button>{' '}
                         with your one-time invite token to choose your confidential password.
                       </p>
-                    </div>
-                  </div>
-
-                  {/* Quick-fill shortcut buttons */}
-                  <div className="pt-2 border-t border-slate-800">
-                    <p className="text-[11px] text-slate-400 text-center mb-2 font-medium">
-                      Active Account Quick-Fill:
-                    </p>
-                    <div className="flex justify-center text-[11px]">
-                      <button
-                        type="button"
-                        onClick={() => handleQuickFill('director@dbica.org')}
-                        className="px-4 py-2 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 text-center font-medium transition cursor-pointer"
-                      >
-                        Super Admin: Fr. Joseph Raj SDB (director@dbica.org)
-                      </button>
                     </div>
                   </div>
                 </form>
@@ -1005,155 +953,6 @@ export const LoginLandingView: React.FC = () => {
                 );
               })()}
 
-              {/* TAB 4: 1-Click Instant Demo Roles */}
-              {activeTab === 'presets' && (
-                <div className="space-y-3 pt-5">
-                  <p className="text-xs text-slate-300 mb-2">
-                    Click any configured role below to authenticate:
-                  </p>
-
-                  {/* Super Admin Preset */}
-                  {(() => {
-                    const superAdmin = staffList.find((s) => s.role === 'Super Admin');
-                    return (
-                      <button
-                        type="button"
-                        onClick={() => loginAsRole('Super Admin')}
-                        className="w-full text-left p-3 rounded-xl bg-amber-500/10 hover:bg-amber-500/15 border border-amber-500/30 hover:border-amber-500/50 transition flex items-center justify-between group"
-                      >
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center font-bold text-sm shrink-0 border border-amber-500/30">
-                            <Shield className="w-5 h-5" />
-                          </div>
-                          <div>
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-sm font-bold text-white">
-                                {superAdmin ? superAdmin.name : 'Super Admin'}
-                              </span>
-                              <span className="text-[10px] font-semibold uppercase px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                                Super Admin
-                              </span>
-                            </div>
-                            <p className="text-xs text-slate-400">
-                              {superAdmin ? `${superAdmin.designation} • Full Administrative Access` : 'Director Account'}
-                            </p>
-                          </div>
-                        </div>
-                        <ChevronRight className="w-4 h-4 text-amber-400 group-hover:translate-x-1 transition-transform" />
-                      </button>
-                    );
-                  })()}
-
-                  {/* HR Admin Preset */}
-                  {(() => {
-                    const hrStaff = staffList.find((s) => s.role === 'HR');
-                    return (
-                      <button
-                        type="button"
-                        onClick={() => loginAsRole('HR')}
-                        className={`w-full text-left p-3 rounded-xl transition flex items-center justify-between group ${
-                          hrStaff
-                            ? 'bg-purple-500/10 hover:bg-purple-500/15 border border-purple-500/30 hover:border-purple-500/50'
-                            : 'bg-slate-800/40 border border-slate-800 opacity-60'
-                        }`}
-                      >
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 rounded-xl bg-purple-500/20 text-purple-400 flex items-center justify-center font-bold text-sm shrink-0 border border-purple-500/30">
-                            <Users className="w-5 h-5" />
-                          </div>
-                          <div>
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-sm font-bold text-white">
-                                {hrStaff ? hrStaff.name : 'HR Administrator'}
-                              </span>
-                              <span className="text-[10px] font-semibold uppercase px-1.5 py-0.2 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30">
-                                HR
-                              </span>
-                            </div>
-                            <p className="text-xs text-slate-400">
-                              {hrStaff ? `${hrStaff.designation} • Staff Balances & Leaves` : 'No HR profile added yet (add via Super Admin)'}
-                            </p>
-                          </div>
-                        </div>
-                        <ChevronRight className="w-4 h-4 text-purple-400 group-hover:translate-x-1 transition-transform" />
-                      </button>
-                    );
-                  })()}
-
-                  {/* Manager / HoD Preset */}
-                  {(() => {
-                    const mgrStaff = staffList.find((s) => s.role === 'Manager');
-                    return (
-                      <button
-                        type="button"
-                        onClick={() => loginAsRole('Manager')}
-                        className={`w-full text-left p-3 rounded-xl transition flex items-center justify-between group ${
-                          mgrStaff
-                            ? 'bg-blue-500/10 hover:bg-blue-500/15 border border-blue-500/30 hover:border-blue-500/50'
-                            : 'bg-slate-800/40 border border-slate-800 opacity-60'
-                        }`}
-                      >
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 rounded-xl bg-blue-500/20 text-blue-400 flex items-center justify-center font-bold text-sm shrink-0 border border-blue-500/30">
-                            <Briefcase className="w-5 h-5" />
-                          </div>
-                          <div>
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-sm font-bold text-white">
-                                {mgrStaff ? mgrStaff.name : 'Department Head / Manager'}
-                              </span>
-                              <span className="text-[10px] font-semibold uppercase px-1.5 py-0.2 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30">
-                                Manager
-                              </span>
-                            </div>
-                            <p className="text-xs text-slate-400">
-                              {mgrStaff ? `${mgrStaff.designation} • Team Leaves & Approvals` : 'No HoD profile added yet (add via Super Admin)'}
-                            </p>
-                          </div>
-                        </div>
-                        <ChevronRight className="w-4 h-4 text-blue-400 group-hover:translate-x-1 transition-transform" />
-                      </button>
-                    );
-                  })()}
-
-                  {/* Staff Member Preset */}
-                  {(() => {
-                    const facultyStaff = staffList.find((s) => s.role === 'Staff');
-                    return (
-                      <button
-                        type="button"
-                        onClick={() => loginAsRole('Staff')}
-                        className={`w-full text-left p-3 rounded-xl transition flex items-center justify-between group ${
-                          facultyStaff
-                            ? 'bg-emerald-500/10 hover:bg-emerald-500/15 border border-emerald-500/30 hover:border-emerald-500/50'
-                            : 'bg-slate-800/40 border border-slate-800 opacity-60'
-                        }`}
-                      >
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold text-sm shrink-0 border border-emerald-500/30">
-                            <UserCheck className="w-5 h-5" />
-                          </div>
-                          <div>
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-sm font-bold text-white">
-                                {facultyStaff ? facultyStaff.name : 'Faculty & Academic Staff'}
-                              </span>
-                              <span className="text-[10px] font-semibold uppercase px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                                Staff
-                              </span>
-                            </div>
-                            <p className="text-xs text-slate-400">
-                              {facultyStaff ? `${facultyStaff.designation} • Apply Leaves & Track Status` : 'No faculty staff added yet (add via Super Admin)'}
-                            </p>
-                          </div>
-                        </div>
-                        <ChevronRight className="w-4 h-4 text-emerald-400 group-hover:translate-x-1 transition-transform" />
-                      </button>
-                    );
-                  })()}
-                </div>
-              )}
-
               {/* Bottom Institutional Disclaimer */}
               <div className="mt-6 pt-4 border-t border-slate-800 text-center text-[11px] text-slate-400 flex items-center justify-center gap-1.5">
                 <KeyRound className="w-3.5 h-3.5 text-slate-400" />
@@ -1306,87 +1105,6 @@ export const LoginLandingView: React.FC = () => {
         </div>
       )}
 
-      {/* MODAL 3: Demo Roster Directory */}
-      {showRosterModal && (
-        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-2xl w-full p-6 text-left shadow-2xl space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <div className="flex items-center gap-2">
-                <Users className="w-5 h-5 text-emerald-400" />
-                <h3 className="font-bold text-white text-base">DBICA Available Staff Directory</h3>
-              </div>
-              <button
-                onClick={() => setShowRosterModal(false)}
-                className="p-1 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <p className="text-xs text-slate-400">
-              Click any staff member to populate their login credentials:
-            </p>
-
-            <div className="max-h-[50vh] overflow-y-auto space-y-2 pr-1">
-              {staffList.map((member) => (
-                <button
-                  key={member.id}
-                  type="button"
-                  onClick={() => {
-                    handleQuickFill(member.email);
-                    setShowRosterModal(false);
-                    setActiveTab('form');
-                  }}
-                  className="w-full text-left p-2.5 rounded-xl bg-slate-800/70 hover:bg-slate-750 hover:border-slate-600 border border-slate-700 transition flex items-center justify-between group text-xs"
-                >
-                  <div className="flex items-center gap-3">
-                    <div
-                      className={`w-8 h-8 rounded-lg flex items-center justify-center font-bold text-white text-xs ${
-                        member.avatarBg || 'bg-slate-700'
-                      }`}
-                    >
-                      {member.name.charAt(0)}
-                    </div>
-                    <div>
-                      <p className="font-semibold text-white group-hover:text-sky-300 transition-colors">
-                        {member.name}
-                      </p>
-                      <p className="text-[11px] text-slate-400">
-                        {member.designation} • {member.department}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <span
-                      className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${
-                        member.role === 'Super Admin'
-                          ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
-                          : member.role === 'HR'
-                          ? 'bg-purple-500/20 text-purple-300 border-purple-500/40'
-                          : member.role === 'Manager'
-                          ? 'bg-blue-500/20 text-blue-300 border-blue-500/40'
-                          : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
-                      }`}
-                    >
-                      {member.role}
-                    </span>
-                    <p className="text-[10px] text-slate-400 mt-0.5 font-mono">{member.id}</p>
-                  </div>
-                </button>
-              ))}
-            </div>
-
-            <div className="flex justify-end pt-3 border-t border-slate-800">
-              <button
-                onClick={() => setShowRosterModal(false)}
-                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-semibold"
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

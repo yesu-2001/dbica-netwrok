@@ -547,17 +547,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       };
     }
 
-    // Validate account password if provided
-    if (password && password.trim()) {
-      const storedPass = matched.portalPassword || 'dbica@2026';
-      const isUniversalDemo =
-        password === 'dbica@2026' ||
-        password === 'director2026' ||
-        password === 'hr2026' ||
-        password === 'hod2026';
+    // Validate account password
+    if (!password || !password.trim()) {
+      return { success: false, error: 'Please enter your confidential portal password.' };
+    }
 
-      if (password !== storedPass && !isUniversalDemo) {
-        const failedAttempts = (matched.failedLoginAttempts || 0) + 1;
+    const storedPass = matched.portalPassword || 'dbica@2026';
+
+    if (password !== storedPass) {
+      const failedAttempts = (matched.failedLoginAttempts || 0) + 1;
         if (failedAttempts >= 5) {
           const lockoutUntil = new Date(Date.now() + 60 * 1000).toISOString();
           const lockoutUpdate = { failedLoginAttempts: failedAttempts, lockoutUntil };
@@ -585,7 +583,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           };
         }
       }
-    }
 
     // Successful login: reset failed attempts and log timestamp
     const authUpdate = {
@@ -1664,7 +1661,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       department: newStaff.department,
     });
 
-    const inviteLink = `${window.location.origin}/#activate?token=${activationToken}&email=${encodeURIComponent(newStaff.email)}`;
+    const activationLink = `${window.location.origin}/#activate?token=${activationToken}&email=${encodeURIComponent(newStaff.email)}`;
 
     addToast(
       'Staff Onboarded & Invite Dispatched',
