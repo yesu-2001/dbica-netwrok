@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { NotificationChannel, StaffMember } from '../types';
 import { buildWhatsAppDirectUrl, formatWhatsAppPhone } from '../services/notificationService';
+import { countNotificationEvents, getVisibleNotifications } from '../utils/notificationUtils';
 
 export const NotificationDispatchCenter: React.FC = () => {
   const {
@@ -160,37 +161,9 @@ export const NotificationDispatchCenter: React.FC = () => {
     }
   };
 
-  // 1. Role-based scoping of notifications:
-  // - Super Admin / HR: See all organization-wide dispatches
-  // - Manager: See dispatches for staff in their department + direct messages to/from them
-  // - Staff: STRICT PRIVACY — strictly see only messages addressed to themselves
   const visibleNotifications = useMemo(() => {
-    return dispatchedNotifications.filter((item) => {
-      if (isSuperAdminOrHR) return true;
-
-      // Identity check: is this notification addressed to the current logged-in user?
-      const isRecipientMe =
-        Boolean(item.metadata?.staffId && item.metadata.staffId === currentUser.id) ||
-        Boolean(item.recipientEmail && item.recipientEmail.trim().toLowerCase() === currentUser.email.trim().toLowerCase()) ||
-        Boolean(item.recipientName && item.recipientName.trim().toLowerCase() === currentUser.name.trim().toLowerCase()) ||
-        Boolean(
-          item.recipientPhone &&
-          currentUser.phone &&
-          item.recipientPhone.replace(/\D/g, '').length >= 10 &&
-          currentUser.phone.replace(/\D/g, '').length >= 10 &&
-          item.recipientPhone.replace(/\D/g, '').slice(-10) === currentUser.phone.replace(/\D/g, '').slice(-10)
-        );
-
-      if (isManager) {
-        const isDepartmentMember = Boolean(item.metadata?.department && item.metadata.department === currentUser.department);
-        const isSenderMe = Boolean(item.metadata?.senderId && item.metadata.senderId === currentUser.id);
-        return isDepartmentMember || isRecipientMe || isSenderMe;
-      }
-
-      // Staff role: STRICT PRIVACY
-      return isRecipientMe;
-    });
-  }, [dispatchedNotifications, currentUser, isSuperAdminOrHR, isManager]);
+    return getVisibleNotifications(dispatchedNotifications, currentUser);
+  }, [dispatchedNotifications, currentUser]);
 
   // 2. Filtered list based on user selections (channel, department, query)
   const filtered = useMemo(() => {
@@ -261,13 +234,11 @@ export const NotificationDispatchCenter: React.FC = () => {
             <p className="text-slate-300 text-xs sm:text-sm leading-relaxed">
               {isStaff ? (
                 <>
-                  Official confirmation records and automated updates dispatched via <strong>Email</strong> and{' '}
-                  <strong>WhatsApp</strong> regarding your leave applications, authorizations, and DBICA notices.
+                  You are notified here only when your leave request is approved or rejected.
                 </>
               ) : isManager ? (
                 <>
-                  Automated delivery logs and direct dispatch for faculty and staff in the{' '}
-                  <strong>{currentUser.department}</strong> department, including leave application alerts and approvals.
+                  Review alerts for leave requests in <strong>{currentUser.department}</strong> and updates for your own requests.
                 </>
               ) : (
                 <>
@@ -300,7 +271,7 @@ export const NotificationDispatchCenter: React.FC = () => {
               <span>{isStaff ? 'My Notifications' : isManager ? 'Dept Dispatches' : 'Total Dispatched'}</span>
             </div>
             <div className="text-2xl font-bold text-white mt-1">
-              {visibleNotifications.length}
+              {countNotificationEvents(visibleNotifications)}
             </div>
           </div>
 
@@ -423,13 +394,11 @@ export const NotificationDispatchCenter: React.FC = () => {
             <p className="text-xs text-slate-500 mt-1 max-w-md mx-auto leading-relaxed">
               {isStaff ? (
                 <>
-                  When you submit leave requests, or when department managers approve or reject your
-                  applications, official automated confirmation receipts will appear here.
+                  An update will appear here when one of your leave requests is approved or rejected.
                 </>
               ) : isManager ? (
                 <>
-                  When faculty members in {currentUser.department} submit leave requests or receive approvals,
-                  automated WhatsApp and Email delivery logs will appear here.
+                  Reviewer alerts for new requests in {currentUser.department} and updates to your own requests will appear here.
                 </>
               ) : (
                 <>
@@ -595,8 +564,8 @@ export const NotificationDispatchCenter: React.FC = () => {
 
       {/* Dispatch Custom Alert Modal / Drawer (Super Admin, HR, Manager) */}
       {!isStaff && isComposerOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 overflow-y-auto">
-          <div className="bg-white rounded-2xl max-w-xl w-full p-6 shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95 duration-150 my-8">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 overflow-hidden">
+          <div className="bg-white rounded-2xl max-w-xl w-full max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain p-5 sm:p-6 shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between border-b border-slate-100 pb-4 mb-4">
               <div className="flex items-center gap-3">
                 <div className="p-2.5 bg-emerald-50 rounded-xl text-emerald-600">

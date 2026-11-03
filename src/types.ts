@@ -36,6 +36,7 @@ export interface LeaveBalance {
 export interface StaffMember {
   id: string;
   userId?: string;
+  authUid?: string;
   name: string;
   email: string;
   phone: string;
@@ -46,9 +47,6 @@ export interface StaffMember {
   leaveThresholds?: LeaveBalance;
   status: 'Active' | 'Inactive';
   accountStatus?: 'active' | 'invited' | 'suspended';
-  activationToken?: string; // High-entropy one-time token for first-time password initialization
-  activationExpiresAt?: string; // ISO date for token expiration (7 days)
-  activatedAt?: string; // ISO date when staff claimed their account and set their password
   resetToken?: string; // One-time token for forgotten password recovery
   resetExpiresAt?: string; // ISO date for reset token expiration
   lastLoginAt?: string;
@@ -70,7 +68,7 @@ export interface LeaveRequest {
   startDate: string; // YYYY-MM-DD (requested comp-off / leave date)
   endDate: string;   // YYYY-MM-DD
   totalDays: number;
-  permissionMinutes?: number;    // Duration in minutes (e.g. 15, 30, 45, 60 mins - max 60 mins/month)
+  permissionMinutes?: number;    // Duration in minutes, calculated from the requested time window
   permissionStartTime?: string;  // e.g. "09:30 AM" or "14:00"
   permissionEndTime?: string;    // e.g. "10:30 AM" or "15:00"
   // Compensatory Leave specific fields:
@@ -99,9 +97,26 @@ export interface AuditLog {
   targetId?: string;
 }
 
+export interface TimesheetEntry {
+  id: string;
+  staffId: string;
+  staffName: string;
+  staffEmail: string;
+  department: Department;
+  workDate: string;
+  taskName?: string;
+  task?: string;
+  priority?: 'Low' | 'Medium' | 'High';
+  status?: 'Not Started' | 'In Progress' | 'Completed';
+  workingHours?: number;
+  comments?: string;
+  createdAt: string;
+}
+
 export type ActiveTab =
   | 'overview'
   | 'my-leaves'
+  | 'timesheets'
   | 'requests'
   | 'staff'
   | 'analytics'
@@ -145,6 +160,7 @@ export interface DispatchedNotification {
     senderId?: string;
     senderName?: string;
     senderRole?: string;
+    audience?: 'applicant' | 'reviewers';
   };
 }
 

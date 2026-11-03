@@ -822,8 +822,8 @@ export const CustomizationSettingsView: React.FC = () => {
 
       {/* MODAL 1: CREATE / EDIT DEPARTMENT */}
       {isDeptModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 overflow-hidden">
+          <div className="bg-white rounded-2xl max-w-md w-full max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain p-5 sm:p-6 shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <div className="flex items-center gap-2 text-blue-600">
                 <Building2 className="w-5 h-5" />
@@ -932,8 +932,8 @@ export const CustomizationSettingsView: React.FC = () => {
 
       {/* MODAL 2: DELETE DEPARTMENT CONFIRMATION */}
       {deletingDept && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 overflow-hidden">
+          <div className="bg-white rounded-2xl max-w-md w-full max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain p-5 sm:p-6 shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95">
             <div className="flex items-center gap-3 text-rose-600 mb-3">
               <div className="p-2.5 bg-rose-50 rounded-xl">
                 <Trash2 className="w-6 h-6" />
@@ -977,8 +977,8 @@ export const CustomizationSettingsView: React.FC = () => {
 
       {/* MODAL 3: STAFF THRESHOLD & BALANCE CUSTOMIZATION */}
       {selectedStaff && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
-          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 overflow-hidden">
+          <div className="bg-white rounded-2xl max-w-lg w-full max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain p-5 sm:p-6 shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <div className="flex items-center gap-2 text-purple-600">
                 <Sliders className="w-5 h-5" />

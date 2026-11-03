@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { parseTimeToMinutes } from './dateUtils';
 
 // Helper evaluating password strength
 function evaluatePassword(password: string) {
@@ -17,19 +18,9 @@ function evaluatePassword(password: string) {
   return { isValid: hasMinLength && score >= 2, score, hasMinLength };
 }
 
-// Helper evaluating permission limits
-function evaluatePermissionAllowance(existingMinutes: number, requestedMinutes: number) {
-  const MAX_MINUTES = 60;
-  if (requestedMinutes <= 0 || requestedMinutes > MAX_MINUTES) {
-    return { allowed: false, reason: 'Duration must be between 1 and 60 minutes.' };
-  }
-  if (existingMinutes + requestedMinutes > MAX_MINUTES) {
-    return {
-      allowed: false,
-      reason: `Exceeds monthly limit. Remaining allowance: ${MAX_MINUTES - existingMinutes} minutes.`,
-    };
-  }
-  return { allowed: true, remaining: MAX_MINUTES - (existingMinutes + requestedMinutes) };
+// Permission requests have no monthly cap; each request needs a positive duration.
+function evaluatePermissionRequest(requestedMinutes: number) {
+  return { allowed: Number.isFinite(requestedMinutes) && requestedMinutes > 0 };
 }
 
 // Helper evaluating balance deduction & refund
@@ -56,24 +47,21 @@ test('Password strength evaluator enforces security requirements', () => {
   assert.equal(evaluatePassword('Dbica@2026').isValid, true);
 });
 
-test('Institutional permission rule enforces strict 60 minutes/month cap', () => {
-  // First 45 mins: allowed
-  const r1 = evaluatePermissionAllowance(0, 45);
-  assert.equal(r1.allowed, true);
-  assert.equal(r1.remaining, 15);
+test('Permission requests have no monthly cap but require a positive duration', () => {
+  assert.equal(evaluatePermissionRequest(45).allowed, true);
+  assert.equal(evaluatePermissionRequest(90).allowed, true);
+  assert.equal(evaluatePermissionRequest(180).allowed, true);
+  assert.equal(evaluatePermissionRequest(0).allowed, false);
+  assert.equal(evaluatePermissionRequest(-15).allowed, false);
+  assert.equal(evaluatePermissionRequest(Number.NaN).allowed, false);
+});
 
-  // Subsequent 30 mins: exceeds (45 + 30 = 75 > 60)
-  const r2 = evaluatePermissionAllowance(45, 30);
-  assert.equal(r2.allowed, false);
-
-  // Subsequent 15 mins: exactly reaches 60 mins cap
-  const r3 = evaluatePermissionAllowance(45, 15);
-  assert.equal(r3.allowed, true);
-  assert.equal(r3.remaining, 0);
-
-  // Zero or negative minutes rejected
-  assert.equal(evaluatePermissionAllowance(0, 0).allowed, false);
-  assert.equal(evaluatePermissionAllowance(0, 70).allowed, false);
+test('Permission duration is calculated from a valid time window', () => {
+  const start = parseTimeToMinutes('09:30');
+  const end = parseTimeToMinutes('11:00');
+  const duration = start !== null && end !== null ? end - start : null;
+  assert.equal(duration, 90);
+  assert.equal(parseTimeToMinutes('13:70'), null);
 });
 
 test('Leave balance transactions handle deductions, limits, and refunds safely', () => {

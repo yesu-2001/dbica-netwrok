@@ -115,7 +115,7 @@ class MockEmailService {
   }
 
   /**
-   * Triggered when a staff member submits a leave request
+   * Notify reviewers when a staff member submits a leave request
    */
   public notifyLeaveSubmitted(
     request: LeaveRequest,
@@ -124,53 +124,7 @@ class MockEmailService {
     const timestamp = new Date().toISOString();
     const sentEmails: EmailNotification[] = [];
 
-    // 1. Confirmation Email to the Applicant
-    const applicantEmail: EmailNotification = {
-      id: `email-${Date.now()}-applicant`,
-      to: request.staffEmail,
-      from: SYSTEM_SENDER,
-      subject: `[DBICA Leave Portal] Application Received: ${request.leaveType} Leave (${request.totalDays}d)`,
-      timestamp,
-      type: 'LEAVE_SUBMITTED',
-      metadata: {
-        requestId: request.id,
-        staffName: request.staffName,
-        staffEmail: request.staffEmail,
-        department: request.department,
-        leaveType: request.leaveType,
-        startDate: request.startDate,
-        endDate: request.endDate,
-        totalDays: request.totalDays,
-      },
-      body: `Dear ${request.staffName},
-
-Your leave request has been successfully submitted to the DBICA Staff Leave Management Portal.
-
-LEAVE APPLICATION DETAILS:
---------------------------------------------------
-• Request ID:         #${request.id}
-• Leave Type:         ${request.leaveType} Leave
-• Duration:           ${request.startDate} to ${request.endDate} (${request.totalDays} working day(s))
-• Department:         ${request.department}
-• Reason:             ${request.reason}
-• Emergency Contact:  ${request.emergencyContact || 'Not specified'}
-• Status:             PENDING APPROVAL
---------------------------------------------------
-
-Your application has been routed to your Department Head and the HR Office for review. You will receive an automated notification as soon as a decision is recorded.
-
-You can check real-time status under the "My Leaves" tab in the DBICA Portal.
-
-Warm regards,
-DBICA Human Resources & Leave Administration
-Don Bosco Institute of Communication Arts
-Chennai, Tamil Nadu, India`,
-    };
-
-    this.dispatch(applicantEmail);
-    sentEmails.push(applicantEmail);
-
-    // 2. Notification to Reporting Manager & HR
+    // Notify the reporting manager and HR; applicants are notified after a decision.
     const reviewerRecipients = [
       managerEmail || `${request.department.toLowerCase().replace(/[^a-z]/g, '')}-hod@dbica.ac.in`,
       HR_OFFICE_EMAIL,

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { EmailNotification } from '../types';
+import { getVisibleEmailNotifications } from '../utils/notificationUtils';
 import {
   Mail,
   X,
@@ -20,15 +21,17 @@ interface EmailLogModalProps {
 }
 
 export const EmailLogModal: React.FC<EmailLogModalProps> = ({ isOpen, onClose }) => {
-  const { emailHistory } = useApp();
-  const [selectedEmail, setSelectedEmail] = useState<EmailNotification | null>(
-    emailHistory[0] || null
-  );
+  const { emailHistory, currentUser } = useApp();
+  const [selectedEmail, setSelectedEmail] = useState<EmailNotification | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const visibleEmailHistory = getVisibleEmailNotifications(emailHistory, currentUser);
 
   if (!isOpen) return null;
 
-  const currentEmail = selectedEmail || emailHistory[0] || null;
+  const currentEmail =
+    visibleEmailHistory.find((email) => email.id === selectedEmail?.id) ||
+    visibleEmailHistory[0] ||
+    null;
 
   const handleCopyBody = (text: string, id: string) => {
     navigator.clipboard.writeText(text);
@@ -61,7 +64,7 @@ export const EmailLogModal: React.FC<EmailLogModalProps> = ({ isOpen, onClose })
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-xs">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] flex flex-col overflow-hidden border border-slate-200 animate-in fade-in zoom-in-95 duration-150">
+      <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full h-[min(90dvh,48rem)] flex flex-col overflow-hidden border border-slate-200 animate-in fade-in zoom-in-95 duration-150">
         {/* Header */}
         <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between bg-slate-50/80">
           <div className="flex items-center gap-2.5">
@@ -108,18 +111,18 @@ export const EmailLogModal: React.FC<EmailLogModalProps> = ({ isOpen, onClose })
         {/* Content Body: Two Columns on tablet/desktop */}
         <div className="flex-1 flex flex-col md:flex-row min-h-0 overflow-hidden">
           {/* Left Column: Email List */}
-          <div className="w-full md:w-5/12 border-r border-slate-200 overflow-y-auto bg-slate-50/40 p-3 space-y-2">
+          <div className="w-full md:w-5/12 max-h-[35%] md:max-h-none min-h-0 shrink-0 border-b md:border-b-0 md:border-r border-slate-200 overflow-y-auto bg-slate-50/40 p-3 space-y-2">
             <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500 px-2 py-1">
-              Dispatched Emails ({emailHistory.length})
+              Dispatched Emails ({visibleEmailHistory.length})
             </div>
 
-            {emailHistory.length === 0 ? (
+            {visibleEmailHistory.length === 0 ? (
               <div className="p-8 text-center text-slate-400 text-xs">
                 No simulated emails sent yet. Submit, approve, or reject a leave request to see
                 outgoing notifications!
               </div>
             ) : (
-              emailHistory.map((item) => {
+              visibleEmailHistory.map((item) => {
                 const isSelected = currentEmail?.id === item.id;
                 const badge = typeConfig[item.type];
                 const toDisplay = Array.isArray(item.to) ? item.to.join(', ') : item.to;
@@ -161,7 +164,7 @@ export const EmailLogModal: React.FC<EmailLogModalProps> = ({ isOpen, onClose })
           </div>
 
           {/* Right Column: Selected Email Details */}
-          <div className="w-full md:w-7/12 flex-1 flex flex-col min-h-0 bg-white overflow-y-auto p-5">
+          <div className="w-full md:w-7/12 flex-1 flex flex-col min-h-0 bg-white overflow-y-auto p-4 sm:p-5">
             {currentEmail ? (
               <div className="space-y-4">
                 {/* Email Header Card */}

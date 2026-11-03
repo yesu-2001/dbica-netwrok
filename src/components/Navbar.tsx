@@ -3,6 +3,7 @@ import { useApp } from '../context/AppContext';
 import { Menu, PlusCircle, Calendar, ShieldCheck, Mail, LogOut, Cloud } from 'lucide-react';
 import { ActiveTab } from '../types';
 import { EmailLogModal } from './EmailLogModal';
+import { countEmailEvents, getVisibleEmailNotifications } from '../utils/notificationUtils';
 
 interface NavbarProps {
   onOpenMobileMenu: () => void;
@@ -22,6 +23,13 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenMobileMenu, onOpenApplyMod
       title: 'My Leaves & Balance Portfolio',
       subtitle: `Personal leave balances and application status for ${currentUser.name}`,
     },
+    timesheets: {
+      title: currentUser.role === 'Super Admin' ? 'Staff Timesheets' : 'My Timesheet',
+      subtitle:
+        currentUser.role === 'Super Admin'
+          ? 'Review task updates submitted by staff across DBICA'
+          : 'Record tasks you worked on and review your previous updates',
+    },
     requests: {
       title: 'Leave Request Approvals',
       subtitle:
@@ -38,7 +46,7 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenMobileMenu, onOpenApplyMod
           : 'Multi-Channel Notification & Dispatch Center',
       subtitle:
         currentUser.role === 'Staff'
-          ? `Official Email and WhatsApp confirmations sent to ${currentUser.name}`
+          ? `Approval and rejection updates for ${currentUser.name}`
           : currentUser.role === 'Manager'
           ? `Live delivery logs and dispatch for ${currentUser.department} staff`
           : 'Real-time WhatsApp and Email delivery logs, instant acknowledgement, and direct dispatch',
@@ -62,6 +70,7 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenMobileMenu, onOpenApplyMod
   };
 
   const currentTabInfo = tabTitles[activeTab] || tabTitles.overview;
+  const visibleEmailCount = countEmailEvents(getVisibleEmailNotifications(emailHistory, currentUser));
 
   // Format today's date
   const todayFormatted = new Date().toLocaleDateString('en-IN', {
@@ -131,9 +140,9 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenMobileMenu, onOpenApplyMod
             aria-label="View System Email Notifications"
           >
             <Mail className="w-4 h-4" />
-            {emailHistory.length > 0 && (
+            {visibleEmailCount > 0 && (
               <span className="absolute -top-1 -right-1 min-w-[17px] h-[17px] px-1 bg-blue-600 text-white text-[9.5px] font-extrabold rounded-full flex items-center justify-center border-2 border-white shadow-2xs">
-                {emailHistory.length > 99 ? '99+' : emailHistory.length}
+                {visibleEmailCount > 99 ? '99+' : visibleEmailCount}
               </span>
             )}
           </button>

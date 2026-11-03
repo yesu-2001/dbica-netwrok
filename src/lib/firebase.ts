@@ -11,7 +11,13 @@ import {
   onSnapshot,
   Firestore,
 } from 'firebase/firestore';
-import { getAuth } from 'firebase/auth';
+import {
+  createUserWithEmailAndPassword as createAuthUser,
+  deleteUser,
+  getAuth,
+  signInWithEmailAndPassword as signInToProvisioningAuth,
+  signOut as signOutFromProvisioningAuth,
+} from 'firebase/auth';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 function resolveConfigValue(envVal?: string, jsonVal?: string): string {
@@ -44,12 +50,42 @@ export const db: Firestore =
 
 // Initialize Firebase Authentication
 export const auth = getAuth(app);
+
+const provisioningAppName = 'staff-account-provisioning';
+const provisioningApp =
+  getApps().find((firebaseApp) => firebaseApp.name === provisioningAppName) ||
+  initializeApp(activeFirebaseConfig, provisioningAppName);
+const provisioningAuth = getAuth(provisioningApp);
+
+export async function createStaffAuthAccount(email: string, password: string): Promise<string> {
+  const credential = await createAuthUser(provisioningAuth, email, password);
+  const uid = credential.user.uid;
+  try {
+    await signOutFromProvisioningAuth(provisioningAuth);
+  } catch (error) {
+    console.warn('[Firebase Auth] Could not clear the temporary staff provisioning session:', error);
+  }
+  return uid;
+}
+
+export async function deleteStaffAuthAccount(email: string, password: string): Promise<void> {
+  try {
+    const credential = await signInToProvisioningAuth(provisioningAuth, email, password);
+    await deleteUser(credential.user);
+  } finally {
+    if (provisioningAuth.currentUser) {
+      await signOutFromProvisioningAuth(provisioningAuth);
+    }
+  }
+}
+
 export {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   signOut,
   onAuthStateChanged,
   sendPasswordResetEmail,
+  updatePassword,
 } from 'firebase/auth';
 
 // Required connection test as per Firebase Integration Skill
@@ -76,6 +112,7 @@ testFirestoreConnection().catch(() => {});
 export const COLLECTIONS = {
   STAFF: 'staff',
   LEAVE_REQUESTS: 'leaveRequests',
+  TIMESHEETS: 'timesheets',
   DEPARTMENTS: 'departments',
   SETTINGS: 'settings',
   AUDIT_LOGS: 'auditLogs',

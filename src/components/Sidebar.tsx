@@ -8,6 +8,7 @@ import {
   BarChart3,
   History,
   PlaneTakeoff,
+  ClipboardList,
   ShieldCheck,
   Building2,
   Lock,
@@ -19,6 +20,7 @@ import {
 } from 'lucide-react';
 import { ActiveTab } from '../types';
 import { EditProfileModal } from './EditProfileModal';
+import { countNotificationEvents, getVisibleNotifications } from '../utils/notificationUtils';
 
 export const Sidebar: React.FC = () => {
   const {
@@ -47,30 +49,9 @@ export const Sidebar: React.FC = () => {
     (req) => req.staffId === currentUser.id && req.status === 'Pending'
   ).length;
 
-  // Role-scoped notifications count
-  const relevantNotificationsCount = dispatchedNotifications.filter((n) => {
-    if (currentUser.role === 'Super Admin' || currentUser.role === 'HR') return true;
-    if (currentUser.role === 'Manager') {
-      const isDept = n.metadata?.department === currentUser.department;
-      const isMe =
-        (n.metadata?.staffId && n.metadata.staffId === currentUser.id) ||
-        (n.recipientEmail && n.recipientEmail.toLowerCase() === currentUser.email.toLowerCase()) ||
-        (n.recipientName && n.recipientName.toLowerCase() === currentUser.name.toLowerCase());
-      const isSender = n.metadata?.senderId === currentUser.id;
-      return isDept || isMe || isSender;
-    }
-    // Staff: Strictly their own notifications
-    return (
-      (n.metadata?.staffId && n.metadata.staffId === currentUser.id) ||
-      (n.recipientEmail && n.recipientEmail.toLowerCase() === currentUser.email.toLowerCase()) ||
-      (n.recipientName && n.recipientName.toLowerCase() === currentUser.name.toLowerCase()) ||
-      (n.recipientPhone &&
-        currentUser.phone &&
-        n.recipientPhone.replace(/\D/g, '').length >= 10 &&
-        currentUser.phone.replace(/\D/g, '').length >= 10 &&
-        n.recipientPhone.replace(/\D/g, '').slice(-10) === currentUser.phone.replace(/\D/g, '').slice(-10))
-    );
-  }).length;
+  const relevantNotificationsCount = countNotificationEvents(
+    getVisibleNotifications(dispatchedNotifications, currentUser)
+  );
 
   const canReviewLeaves = currentUser.role !== 'Staff';
   const canManageStaff = currentUser.role === 'Super Admin' || currentUser.role === 'HR';
@@ -104,6 +85,13 @@ export const Sidebar: React.FC = () => {
       description: 'Balances & personal applications',
     },
     {
+      id: 'timesheets',
+      label: currentUser.role === 'Super Admin' ? 'Staff Timesheets' : 'My Timesheet',
+      icon: <ClipboardList className="w-4 h-4" />,
+      visible: true,
+      description: currentUser.role === 'Super Admin' ? 'All staff task updates' : 'Add and review your task updates',
+    },
+    {
       id: 'requests',
       label: 'Leave Approvals',
       icon: <FileCheck2 className="w-4 h-4" />,
@@ -116,7 +104,7 @@ export const Sidebar: React.FC = () => {
       id: 'notifications',
       label:
         currentUser.role === 'Staff'
-          ? 'My Notifications'
+          ? 'Leave Decision Updates'
           : currentUser.role === 'Manager'
           ? 'Department Dispatches'
           : 'Dispatch Center (WhatsApp & Email)',
@@ -126,7 +114,7 @@ export const Sidebar: React.FC = () => {
       visible: true,
       description:
         currentUser.role === 'Staff'
-          ? 'Personal WhatsApp & Email receipts'
+          ? 'Leave approval and rejection updates'
           : currentUser.role === 'Manager'
           ? `${currentUser.department} alerts & receipts`
           : 'Live delivery logs & direct messaging',
@@ -162,8 +150,8 @@ export const Sidebar: React.FC = () => {
   ];
 
   return (
-    <aside className="w-64 bg-slate-900 border-r border-slate-800 text-slate-300 flex flex-col justify-between shrink-0 min-h-screen">
-      <div>
+    <aside className="w-64 h-full min-h-0 bg-slate-900 border-r border-slate-800 text-slate-300 flex flex-col justify-between shrink-0 overflow-hidden">
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
         {/* Organization Brand Header */}
         <div className="p-4 border-b border-slate-800">
           <div className="flex items-center gap-3">

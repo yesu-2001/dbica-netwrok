@@ -99,14 +99,9 @@ class NotificationDispatchService {
     });
   }
 
-  /**
-   * Dispatch when a leave request is submitted:
-   * 1. Confirmation to Applicant (Email + WhatsApp)
-   * 2. Acknowledgement to HoD & HR (Email + WhatsApp)
-   */
+  /** Notify reviewers when a leave request is submitted. */
   public async dispatchLeaveSubmitted(
     request: LeaveRequest,
-    applicantPhone?: string,
     managerPhone?: string,
     managerName?: string,
     managerEmail?: string
@@ -118,80 +113,7 @@ class NotificationDispatchService {
     const durationLabel = isPermission
       ? `${request.startDate} • ${request.permissionMinutes || 60} minutes (${request.permissionStartTime || '09:30'} - ${request.permissionEndTime || '10:30'})`
       : `${request.startDate} to ${request.endDate} (${request.totalDays} working days)`;
-    const subjectPrefix = isPermission
-      ? `[DBICA] Permission Application Acknowledged: ${request.permissionMinutes || 60} Mins on ${request.startDate}`
-      : `[DBICA] Leave Application Acknowledged: ${request.leaveType} (${request.totalDays}d)`;
-
-    // --- 1. APPLICANT EMAIL CONFIRMATION ---
-    const applicantEmailNotif: DispatchedNotification = {
-      id: `notif-${Date.now()}-app-email`,
-      recipientName: request.staffName,
-      recipientEmail: request.staffEmail,
-      recipientPhone: applicantPhone,
-      channel: 'email',
-      type: 'LEAVE_SUBMITTED',
-      subject: subjectPrefix,
-      timestamp,
-      referenceId: request.id,
-      status: 'dispatched',
-      metadata: {
-        requestId: request.id,
-        staffId: request.staffId,
-        staffName: request.staffName,
-        department: request.department,
-        leaveType: request.leaveType,
-        startDate: request.startDate,
-        endDate: request.endDate,
-        totalDays: request.totalDays,
-      },
-      message: `Dear ${request.staffName},\n\nYour ${isPermission ? 'permission' : 'leave'} application #${request.id} has been successfully recorded in the DBICA Portal.\n\n` +
-        `• Category: ${isPermission ? 'Institutional Permission (Short Duration)' : `${request.leaveType} Leave`}\n` +
-        `• Duration: ${durationLabel}\n` +
-        `• Department: ${request.department}\n` +
-        `• Status: PENDING APPROVAL\n\n` +
-        `Your application has been routed to your Department Head and HR for review.\n\nWarm regards,\nDBICA Leave Administration`,
-    };
-    await this.recordAndDispatch(applicantEmailNotif);
-    results.push(applicantEmailNotif);
-
-    // --- 2. APPLICANT WHATSAPP CONFIRMATION ---
-    if (applicantPhone) {
-      const waText =
-        `🏛️ *DBICA Portal — ${isPermission ? 'Permission Request' : 'Leave Application'} Received*\n\n` +
-        `Dear *${request.staffName}*,\n` +
-        `Your request *#${request.id}* has been successfully submitted.\n\n` +
-        `📋 *Type:* ${isPermission ? `Permission (${request.permissionMinutes || 60} mins)` : `${request.leaveType} Leave`}\n` +
-        `📅 *Time:* ${durationLabel}\n` +
-        `🏢 *Department:* ${request.department}\n` +
-        `⏳ *Status:* Pending HoD & HR Approval\n\n` +
-        `You will receive an automated WhatsApp confirmation as soon as a decision is recorded.\n\n` +
-        `_Don Bosco Institute of Communication Arts_`;
-
-      const applicantWaNotif: DispatchedNotification = {
-        id: `notif-${Date.now()}-app-wa`,
-        recipientName: request.staffName,
-        recipientPhone: applicantPhone,
-        channel: 'whatsapp',
-        type: 'LEAVE_SUBMITTED',
-        subject: `[WhatsApp] Application Confirmation #${request.id}`,
-        timestamp,
-        referenceId: request.id,
-        status: 'delivered',
-        whatsappUrl: buildWhatsAppDirectUrl(applicantPhone, waText),
-        message: waText,
-        metadata: {
-          requestId: request.id,
-          staffId: request.staffId,
-          staffName: request.staffName,
-          department: request.department,
-          leaveType: request.leaveType,
-        },
-      };
-      await this.recordAndDispatch(applicantWaNotif);
-      results.push(applicantWaNotif);
-    }
-
-    // --- 3. HOD / HR ACKNOWLEDGEMENT WHATSAPP ---
+    // Applicants are notified after approval or rejection, not on submission.
     const targetManagerPhone = managerPhone || '+91 98402 33452'; // Default to HR if no manager phone
     const targetManagerName = managerName || 'Department Head / HR Office';
 
@@ -236,6 +158,7 @@ class NotificationDispatchService {
         staffName: request.staffName,
         department: request.department,
         leaveType: request.leaveType,
+        audience: 'reviewers',
       },
     };
     await this.recordAndDispatch(hodWaNotif);
@@ -281,6 +204,7 @@ class NotificationDispatchService {
         staffName: request.staffName,
         department: request.department,
         leaveType: request.leaveType,
+        audience: 'applicant',
         actionedBy,
       },
       message: `Dear ${request.staffName},\n\nYour ${isPermission ? 'permission request' : 'leave application'} #${request.id} has been APPROVED by ${actionedBy}.\n\n` +
@@ -323,6 +247,7 @@ class NotificationDispatchService {
           staffName: request.staffName,
           department: request.department,
           leaveType: request.leaveType,
+          audience: 'applicant',
           actionedBy,
         },
       };
@@ -364,13 +289,14 @@ class NotificationDispatchService {
         staffName: request.staffName,
         department: request.department,
         leaveType: request.leaveType,
+        audience: 'applicant',
         actionedBy,
         rejectionReason,
       },
       message: `Dear ${request.staffName},\n\nYour application #${request.id} for ${isPermission ? 'Permission' : `${request.leaveType} leave`} could not be approved at this time.\n\n` +
         `• Reviewed By: ${actionedBy}\n` +
         `• Reason: "${rejectionReason}"\n\n` +
-        `No balance or monthly allowance has been deducted. Please contact your Department Head or HR for rescheduling.\n\nSincerely,\nDBICA Administration`,
+        `No leave balance has been deducted. Please contact your Department Head or HR for rescheduling.\n\nSincerely,\nDBICA Administration`,
     };
     await this.recordAndDispatch(emailNotif);
     results.push(emailNotif);
@@ -382,7 +308,7 @@ class NotificationDispatchService {
         `Dear *${request.staffName}*,\n` +
         `Your application *#${request.id}* (${isPermission ? 'Permission' : `${request.leaveType} Leave`}) could not be approved by *${actionedBy}*.\n\n` +
         `📌 *Reason:* "${rejectionReason}"\n` +
-        `ℹ️ *Balance:* No monthly quota deducted\n\n` +
+        `ℹ️ *Balance:* No leave balance deducted\n\n` +
         `Please contact your Department Head or HR Office for any questions.\n\n` +
         `_DBICA Leave Administration_`;
 
@@ -404,6 +330,7 @@ class NotificationDispatchService {
           staffName: request.staffName,
           department: request.department,
           leaveType: request.leaveType,
+          audience: 'applicant',
           actionedBy,
           rejectionReason,
         },

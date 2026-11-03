@@ -20,6 +20,7 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({ isOpen, onCl
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPass, setShowPass] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
 
   // Sync with current user when opening
   useEffect(() => {
@@ -37,13 +38,13 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({ isOpen, onCl
 
   const departments: string[] = appDepartments.map((d) => d.name);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
 
     if (newPassword.trim()) {
-      if (newPassword.trim().length < 4) {
-        setErrorMsg('New password must be at least 4 characters long.');
+      if (newPassword.trim().length < 6) {
+        setErrorMsg('New password must be at least 6 characters long.');
         return;
       }
       if (newPassword !== confirmPassword) {
@@ -52,25 +53,30 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({ isOpen, onCl
       }
     }
 
-    const result = updateOwnProfile({
-      name: name.trim(),
-      email: email.trim(),
-      phone: phone.trim(),
-      department,
-      designation: designation.trim(),
-      ...(newPassword.trim() ? { portalPassword: newPassword.trim() } : {}),
-    });
+    setIsSaving(true);
+    try {
+      const result = await updateOwnProfile({
+        name: name.trim(),
+        email: email.trim(),
+        phone: phone.trim(),
+        department,
+        designation: designation.trim(),
+        ...(newPassword.trim() ? { portalPassword: newPassword.trim() } : {}),
+      });
 
-    if (result.success) {
-      onClose();
-    } else {
-      setErrorMsg(result.error || 'Failed to update profile.');
+      if (result.success) {
+        onClose();
+      } else {
+        setErrorMsg(result.error || 'Failed to update profile.');
+      }
+    } finally {
+      setIsSaving(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 overflow-y-auto">
-      <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95 duration-150 my-8">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 overflow-hidden">
+      <div className="bg-white rounded-2xl max-w-lg w-full max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain p-5 sm:p-6 shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95 duration-150">
         {/* Header */}
         <div className="flex items-center justify-between pb-4 border-b border-slate-100">
           <div className="flex items-center gap-2.5">
@@ -223,13 +229,13 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({ isOpen, onCl
               <span className="text-[10.5px] text-slate-400">Optional</span>
             </div>
             <p className="text-[11px] text-slate-500">
-              Leave blank to keep your current password, or enter a new confidential password below:
+              Leave blank to keep your current password. A new password is updated in Firebase Authentication and the portal together:
             </p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
               <div className="relative">
                 <input
                   type={showPass ? 'text' : 'password'}
-                  placeholder="New password (min 4 chars)"
+                  placeholder="New password (min 6 chars)"
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
                   className="w-full px-3 py-1.5 pr-8 border border-slate-300 rounded-lg text-xs bg-white"
@@ -265,9 +271,10 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({ isOpen, onCl
             </button>
             <button
               type="submit"
-              className="px-5 py-2 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow-sm shadow-blue-600/30 transition-all"
+              disabled={isSaving}
+              className="px-5 py-2 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow-sm shadow-blue-600/30 transition-all disabled:cursor-not-allowed disabled:opacity-60"
             >
-              Save Changes
+              {isSaving ? 'Saving...' : 'Save Changes'}
             </button>
           </div>
         </form>

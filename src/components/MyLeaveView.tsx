@@ -26,7 +26,7 @@ import { EditProfileModal } from './EditProfileModal';
 export const MyLeaveView: React.FC<{ onApplyLeave: (type?: LeaveType) => void }> = ({
   onApplyLeave,
 }) => {
-  const { currentUser, leaveRequests, cancelLeave, getMonthlyPermissionStats } = useApp();
+  const { currentUser, leaveRequests, cancelLeave, getMonthlyPermissionUsage } = useApp();
 
   const [statusFilter, setStatusFilter] = useState<string>('All');
   const [searchTerm, setSearchTerm] = useState<string>('');
@@ -36,9 +36,9 @@ export const MyLeaveView: React.FC<{ onApplyLeave: (type?: LeaveType) => void }>
   // Filter requests for logged-in user
   const myRequests = leaveRequests.filter((r) => r.staffId === currentUser.id);
 
-  // Current month permission allowance stats (Max 60 mins/month)
+  // Current month permission usage is shown for reference only; there is no quota.
   const currentMonthKey = new Date().toISOString().slice(0, 7);
-  const permStats = getMonthlyPermissionStats(currentUser.id, currentMonthKey);
+  const permissionUsage = getMonthlyPermissionUsage(currentUser.id, currentMonthKey);
 
   // Calculate Used days per leave category from Approved requests
   const usedCasual = myRequests
@@ -176,7 +176,7 @@ export const MyLeaveView: React.FC<{ onApplyLeave: (type?: LeaveType) => void }>
             id="my-permission-apply-btn"
             onClick={() => onApplyLeave('Permission')}
             className="flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold text-violet-700 bg-violet-50 hover:bg-violet-100 border border-violet-200 transition-all shadow-2xs"
-            title="Apply for monthly Permission (Max 60 mins/month)"
+            title="Request permission for a specific time window"
           >
             <Timer className="w-4 h-4 text-violet-600" />
             <span>Apply Permission</span>
@@ -197,7 +197,7 @@ export const MyLeaveView: React.FC<{ onApplyLeave: (type?: LeaveType) => void }>
       <div>
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider">
-            Leave & Permission Allowance Portfolio
+            Leave Balances & Permission Tracking
           </h3>
           <span className="text-xs text-slate-500">Academic Year 2026-2027</span>
         </div>
@@ -289,50 +289,33 @@ export const MyLeaveView: React.FC<{ onApplyLeave: (type?: LeaveType) => void }>
             );
           })}
 
-          {/* 4th Card: Monthly Permission Allowance (Max 60 Mins/Month) */}
+          {/* Permission request usage */}
           <div className="bg-white rounded-2xl border border-violet-200 hover:border-violet-300 p-5 shadow-xs transition-all flex flex-col justify-between">
             <div>
               <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-violet-900">Permission Quota</span>
+                <span className="text-xs font-bold text-violet-900">Permissions This Month</span>
                 <span className="text-[11px] font-bold px-2 py-0.5 rounded-md bg-violet-100 text-violet-800 border border-violet-200">
-                  60m / Mo
+                  No quota
                 </span>
               </div>
 
               <div className="mt-3 flex items-baseline justify-between">
                 <div>
-                  <span className={`text-3xl font-black tracking-tight ${permStats.remainingMinutes <= 0 ? 'text-rose-600' : 'text-violet-900'}`}>
-                    {permStats.remainingMinutes}
+                  <span className="text-3xl font-black tracking-tight text-violet-900">
+                    {permissionUsage.requestsCount}
                   </span>
-                  <span className="text-xs text-slate-500 ml-1.5 font-medium">Mins Left</span>
+                  <span className="text-xs text-slate-500 ml-1.5 font-medium">
+                    {permissionUsage.requestsCount === 1 ? 'request' : 'requests'}
+                  </span>
                 </div>
                 <div className="text-right text-xs">
-                  <span className="text-slate-400">Used: </span>
-                  <strong className="text-violet-700">{permStats.usedMinutes}m</strong>
+                  <span className="text-slate-400">Requested: </span>
+                  <strong className="text-violet-700">{permissionUsage.usedMinutes}m</strong>
                 </div>
               </div>
 
-              {/* Progress bar */}
-              <div className="mt-3">
-                <div className="w-full bg-violet-100 h-2 rounded-full overflow-hidden">
-                  <div
-                    className={`h-full rounded-full transition-all duration-500 ${
-                      permStats.usedMinutes >= 60 ? 'bg-rose-500' : 'bg-violet-600'
-                    }`}
-                    style={{
-                      width: `${Math.min(100, Math.round((permStats.usedMinutes / 60) * 100))}%`,
-                    }}
-                  />
-                </div>
-              </div>
-
-              <div className="mt-3 pt-3 border-t border-violet-100 flex items-center justify-between text-[11px] text-slate-500">
-                <span>
-                  Allowance: <strong>60 mins</strong>
-                </span>
-                <span>
-                  Used: <strong>{Math.round((permStats.usedMinutes / 60) * 100)}%</strong>
-                </span>
+              <div className="mt-3 border-t border-violet-100 pt-3 text-[11px] leading-relaxed text-slate-500">
+                Each request is reviewed individually. There is no monthly minute limit.
               </div>
             </div>
 
@@ -468,7 +451,7 @@ export const MyLeaveView: React.FC<{ onApplyLeave: (type?: LeaveType) => void }>
                               {req.permissionMinutes || 60} mins
                             </span>
                             <span className="block text-[10px] text-slate-400 font-normal">
-                              0 days quota
+                              Time-based request
                             </span>
                           </div>
                         ) : (

@@ -15,7 +15,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { LeaveType } from '../types';
-import { calculateWorkingDays } from '../utils/dateUtils';
+import { calculateWorkingDays, parseTimeToMinutes } from '../utils/dateUtils';
 
 interface ApplyLeaveModalProps {
   isOpen: boolean;
@@ -28,7 +28,7 @@ export const ApplyLeaveModal: React.FC<ApplyLeaveModalProps> = ({
   onClose,
   initialType = 'Casual',
 }) => {
-  const { currentUser, applyLeave, getMonthlyPermissionStats } = useApp();
+  const { currentUser, applyLeave } = useApp();
 
   // Normalize initialType if legacy 'Earned' is passed
   const effectiveInitialType: LeaveType =
@@ -38,10 +38,9 @@ export const ApplyLeaveModal: React.FC<ApplyLeaveModalProps> = ({
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   
-  // Permission specific fields (max 60 mins/month)
-  const [permissionMinutes, setPermissionMinutes] = useState<number>(60);
-  const [permissionStartTime, setPermissionStartTime] = useState<string>('09:30 AM');
-  const [permissionEndTime, setPermissionEndTime] = useState<string>('10:30 AM');
+  // Permission duration is derived from its time window; there is no monthly quota.
+  const [permissionStartTime, setPermissionStartTime] = useState<string>('09:30');
+  const [permissionEndTime, setPermissionEndTime] = useState<string>('10:30');
 
   // Compensatory Leave specific fields (Claim for extra hours / holidays worked)
   const [workedDate, setWorkedDate] = useState<string>('');
@@ -74,6 +73,8 @@ export const ApplyLeaveModal: React.FC<ApplyLeaveModalProps> = ({
       setWorkedHours(8);
       setWorkedPeriodType('After Office Hours');
       setWorkedDutyDetails('');
+      setPermissionStartTime('09:30');
+      setPermissionEndTime('10:30');
 
       const normalizedType: LeaveType =
         (initialType as string) === 'Earned' ? 'Compensatory' : initialType || 'Casual';
@@ -87,8 +88,12 @@ export const ApplyLeaveModal: React.FC<ApplyLeaveModalProps> = ({
   const isPermission = leaveType === 'Permission';
   const isCompensatory = leaveType === 'Compensatory' || (leaveType as string) === 'Earned';
 
-  const targetMonthStr = (startDate || new Date().toISOString().split('T')[0]).slice(0, 7);
-  const permStats = getMonthlyPermissionStats(currentUser.id, targetMonthStr);
+  const permissionStartMinutes = parseTimeToMinutes(permissionStartTime);
+  const permissionEndMinutes = parseTimeToMinutes(permissionEndTime);
+  const permissionDurationMinutes =
+    permissionStartMinutes !== null && permissionEndMinutes !== null && permissionEndMinutes > permissionStartMinutes
+      ? permissionEndMinutes - permissionStartMinutes
+      : 0;
 
   const totalWorkingDays = calculateWorkingDays(startDate, endDate || startDate);
 
@@ -110,30 +115,7 @@ export const ApplyLeaveModal: React.FC<ApplyLeaveModalProps> = ({
   const isLeaveInsufficient =
     !isPermission && availableBalance !== null && totalWorkingDays > availableBalance;
 
-  // Check permission monthly allowance
-  const isPermissionExceeded =
-    isPermission &&
-    (permStats.remainingMinutes <= 0 || permissionMinutes > permStats.remainingMinutes);
-
-  const isSubmitDisabled = isPermission ? isPermissionExceeded : isLeaveInsufficient;
-
-  // Quick preset helper for permission duration
-  const handleSelectMinutes = (mins: number) => {
-    setPermissionMinutes(mins);
-    if (mins === 15) {
-      setPermissionStartTime('09:30 AM');
-      setPermissionEndTime('09:45 AM');
-    } else if (mins === 30) {
-      setPermissionStartTime('09:30 AM');
-      setPermissionEndTime('10:00 AM');
-    } else if (mins === 45) {
-      setPermissionStartTime('09:30 AM');
-      setPermissionEndTime('10:15 AM');
-    } else {
-      setPermissionStartTime('09:30 AM');
-      setPermissionEndTime('10:30 AM');
-    }
-  };
+  const isSubmitDisabled = !isPermission && isLeaveInsufficient;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -150,18 +132,8 @@ export const ApplyLeaveModal: React.FC<ApplyLeaveModalProps> = ({
         setErrorMsg('Please choose the date for the permission.');
         return;
       }
-      if (permissionMinutes <= 0) {
-        setErrorMsg('Permission duration must be at least 1 minute.');
-        return;
-      }
-      if (permissionMinutes > 60) {
-        setErrorMsg('Maximum time for permissions is 60 minutes per month.');
-        return;
-      }
-      if (permissionMinutes > permStats.remainingMinutes) {
-        setErrorMsg(
-          `Exceeds monthly quota! You have only ${permStats.remainingMinutes} minutes remaining for ${targetMonthStr}.`
-        );
+      if (permissionDurationMinutes <= 0) {
+        setErrorMsg('End time must be later than start time.');
         return;
       }
       if (!reason.trim()) {
@@ -224,7 +196,7 @@ export const ApplyLeaveModal: React.FC<ApplyLeaveModalProps> = ({
       endDate: isPermission ? startDate : isCompensatory ? (endDate || startDate) : endDate,
       reason: finalReason,
       emergencyContact: emergencyContact.trim(),
-      permissionMinutes: isPermission ? permissionMinutes : undefined,
+      permissionMinutes: isPermission ? permissionDurationMinutes : undefined,
       permissionStartTime: isPermission ? permissionStartTime : undefined,
       permissionEndTime: isPermission ? permissionEndTime : undefined,
       workedDate: isCompensatory ? workedDate : undefined,
@@ -245,8 +217,8 @@ export const ApplyLeaveModal: React.FC<ApplyLeaveModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 overflow-y-auto">
-      <div className="bg-white rounded-2xl max-w-xl w-full p-6 shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95 duration-150 my-8">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 overflow-hidden">
+      <div className="bg-white rounded-2xl max-w-xl w-full max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain p-5 sm:p-6 shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95 duration-150">
         {/* Header */}
         <div className="flex items-center justify-between pb-4 border-b border-slate-100">
           <div>
@@ -588,70 +560,14 @@ export const ApplyLeaveModal: React.FC<ApplyLeaveModalProps> = ({
             /* PERMISSION SPECIAL INTERFACE (MAX 60 MINS/MONTH) */
             /* ========================================================================= */
             <div className="space-y-3.5">
-              {/* Institutional Rule & Monthly Quota Card */}
-              <div className="p-3.5 rounded-xl bg-violet-50/60 border border-violet-200 text-xs">
-                <div className="flex items-center justify-between pb-2 border-b border-violet-100">
-                  <div className="flex items-center gap-2 text-violet-950 font-bold">
-                    <ShieldCheck className="w-4 h-4 text-violet-600" />
-                    <span>Monthly Permission Allowance</span>
-                  </div>
-                  <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-violet-100 text-violet-800 border border-violet-200">
-                    Max 60 Mins / Month
-                  </span>
+              <div className="rounded-xl border border-violet-200 bg-violet-50/60 p-3.5 text-xs text-violet-950">
+                <div className="flex items-center gap-2 font-bold">
+                  <ShieldCheck className="h-4 w-4 text-violet-600" />
+                  <span>Permission requests are reviewed individually</span>
                 </div>
-
-                <div className="grid grid-cols-3 gap-2 mt-2.5 text-center">
-                  <div className="bg-white/80 p-2 rounded-lg border border-violet-100">
-                    <div className="text-[10px] uppercase font-semibold text-slate-500">
-                      Total Quota
-                    </div>
-                    <div className="text-base font-black text-slate-900 mt-0.5">
-                      {permStats.maxMinutes}m
-                    </div>
-                  </div>
-                  <div className="bg-white/80 p-2 rounded-lg border border-violet-100">
-                    <div className="text-[10px] uppercase font-semibold text-slate-500">
-                      Used ({targetMonthStr})
-                    </div>
-                    <div className="text-base font-black text-violet-700 mt-0.5">
-                      {permStats.usedMinutes}m
-                    </div>
-                  </div>
-                  <div className="bg-white/80 p-2 rounded-lg border border-violet-100">
-                    <div className="text-[10px] uppercase font-semibold text-slate-500">
-                      Remaining
-                    </div>
-                    <div
-                      className={`text-base font-black mt-0.5 ${
-                        permStats.remainingMinutes <= 0
-                          ? 'text-rose-600'
-                          : permStats.remainingMinutes < 30
-                          ? 'text-amber-600'
-                          : 'text-emerald-700'
-                      }`}
-                    >
-                      {permStats.remainingMinutes}m
-                    </div>
-                  </div>
-                </div>
-
-                {/* Visual Progress Bar */}
-                <div className="mt-3">
-                  <div className="w-full bg-violet-100/70 h-2 rounded-full overflow-hidden">
-                    <div
-                      className={`h-full rounded-full transition-all duration-300 ${
-                        permStats.usedMinutes >= 60 ? 'bg-rose-500' : 'bg-violet-600'
-                      }`}
-                      style={{
-                        width: `${Math.min(100, Math.round((permStats.usedMinutes / 60) * 100))}%`,
-                      }}
-                    />
-                  </div>
-                  <div className="flex items-center justify-between text-[10.5px] text-slate-500 mt-1">
-                    <span>{permStats.usedMinutes} mins utilized</span>
-                    <span>{permStats.remainingMinutes} mins available</span>
-                  </div>
-                </div>
+                <p className="mt-1.5 leading-relaxed text-slate-600">
+                  There is no monthly minute quota. Choose the actual time window for this request; your duration is calculated automatically.
+                </p>
               </div>
 
               {/* Date of Permission */}
@@ -671,77 +587,6 @@ export const ApplyLeaveModal: React.FC<ApplyLeaveModalProps> = ({
                 />
               </div>
 
-              {/* Duration Presets & Input */}
-              <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className="text-xs font-semibold text-slate-700">
-                    Permission Duration *
-                  </label>
-                  <span className="text-[11px] text-slate-500 font-medium">
-                    Requested: <strong className="text-violet-700">{permissionMinutes} mins</strong>
-                  </span>
-                </div>
-
-                <div className="grid grid-cols-4 gap-2 mb-2">
-                  {[15, 30, 45, 60].map((mins) => {
-                    const isSelected = permissionMinutes === mins;
-                    const exceeds = mins > permStats.remainingMinutes;
-
-                    return (
-                      <button
-                        type="button"
-                        key={mins}
-                        disabled={exceeds}
-                        onClick={() => handleSelectMinutes(mins)}
-                        className={`py-2 px-2 text-xs rounded-xl font-semibold border transition-all text-center ${
-                          isSelected
-                            ? 'bg-violet-600 text-white border-violet-600 shadow-xs'
-                            : exceeds
-                            ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed opacity-50'
-                            : 'bg-white text-slate-700 border-slate-200 hover:border-violet-300 hover:bg-violet-50/40'
-                        }`}
-                      >
-                        {mins} Mins
-                      </button>
-                    );
-                  })}
-                </div>
-
-                {/* Custom Minutes Input Slider */}
-                <div className="flex items-center gap-3 bg-slate-50 p-2.5 rounded-xl border border-slate-200">
-                  <span className="text-xs text-slate-600 shrink-0 font-medium">Custom Minutes:</span>
-                  <input
-                    type="range"
-                    min={5}
-                    max={Math.min(60, permStats.remainingMinutes || 60)}
-                    step={5}
-                    value={permissionMinutes}
-                    onChange={(e) => setPermissionMinutes(Number(e.target.value))}
-                    className="flex-1 accent-violet-600 cursor-pointer"
-                  />
-                  <div className="flex items-center gap-1 shrink-0">
-                    <input
-                      type="number"
-                      min={1}
-                      max={60}
-                      value={permissionMinutes}
-                      onChange={(e) => setPermissionMinutes(Number(e.target.value))}
-                      className="w-16 px-2 py-1 text-xs border border-slate-300 rounded-lg text-center font-bold text-slate-800 bg-white"
-                    />
-                    <span className="text-xs text-slate-500 font-medium">min</span>
-                  </div>
-                </div>
-
-                {isPermissionExceeded && (
-                  <p className="text-[11px] text-rose-600 font-medium mt-1 flex items-center gap-1">
-                    <AlertCircle className="w-3.5 h-3.5" />
-                    {permStats.remainingMinutes <= 0
-                      ? 'You have already exhausted your 60-minute permission quota for this month.'
-                      : `Selected ${permissionMinutes} minutes exceeds your remaining allowance of ${permStats.remainingMinutes} minutes.`}
-                  </p>
-                )}
-              </div>
-
               {/* Time Window (From - To) */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -749,11 +594,10 @@ export const ApplyLeaveModal: React.FC<ApplyLeaveModalProps> = ({
                     Start Time *
                   </label>
                   <input
-                    type="text"
+                    type="time"
                     required
                     value={permissionStartTime}
                     onChange={(e) => setPermissionStartTime(e.target.value)}
-                    placeholder="e.g. 09:30 AM"
                     className="w-full text-xs px-3 py-2 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-violet-500 bg-white"
                   />
                 </div>
@@ -762,15 +606,17 @@ export const ApplyLeaveModal: React.FC<ApplyLeaveModalProps> = ({
                     End Time *
                   </label>
                   <input
-                    type="text"
+                    type="time"
                     required
                     value={permissionEndTime}
                     onChange={(e) => setPermissionEndTime(e.target.value)}
-                    placeholder="e.g. 10:30 AM"
                     className="w-full text-xs px-3 py-2 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-violet-500 bg-white"
                   />
                 </div>
               </div>
+              <p className="text-xs text-slate-600">
+                Requested duration: <strong className="text-violet-700">{permissionDurationMinutes} minutes</strong>
+              </p>
             </div>
           ) : (
             /* ========================================================================= */
@@ -926,7 +772,7 @@ export const ApplyLeaveModal: React.FC<ApplyLeaveModalProps> = ({
               }`}
             >
               {isPermission
-                ? `Submit Permission (${permissionMinutes} Mins)`
+                ? `Submit Permission (${permissionDurationMinutes} Mins)`
                 : isCompensatory
                 ? `Claim Compensatory Leave (${totalWorkingDays} Day${totalWorkingDays > 1 ? 's' : ''})`
                 : 'Submit Leave Application'}

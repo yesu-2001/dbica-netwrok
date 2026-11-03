@@ -12,6 +12,7 @@ import {
   EmailNotification,
   DispatchedNotification,
   NotificationChannel,
+  TimesheetEntry,
 } from '../types';
 import {
   INITIAL_STAFF_MEMBERS,
@@ -20,16 +21,38 @@ import {
   INITIAL_DEPARTMENTS,
   INITIAL_GLOBAL_THRESHOLDS,
 } from '../data/seedData';
-import { calculateWorkingDays } from '../utils/dateUtils';
+import { calculateWorkingDays, parseTimeToMinutes } from '../utils/dateUtils';
 import { mockEmailService } from '../services/mockEmailService';
 import { firestoreService } from '../services/firestoreService';
 import { notificationService } from '../services/notificationService';
-import { auth, signInWithEmailAndPassword, signOut as firebaseSignOut } from '../lib/firebase';
+import {
+  auth,
+  createStaffAuthAccount,
+  deleteStaffAuthAccount,
+  signInWithEmailAndPassword,
+  signOut as firebaseSignOut,
+  onAuthStateChanged,
+  sendPasswordResetEmail,
+  updatePassword,
+} from '../lib/firebase';
 
 interface AppContextType {
   currentUser: StaffMember;
   staffList: StaffMember[];
   leaveRequests: LeaveRequest[];
+  timesheetEntries: TimesheetEntry[];
+  timesheetLoadError: string | null;
+  addTimesheetEntry: (entry: {
+    workDate: string;
+    taskName: string;
+    priority: 'Low' | 'Medium' | 'High';
+    status: 'Not Started' | 'In Progress' | 'Completed';
+    workingHours: number;
+    comments: string;
+  }) => Promise<{
+    success: boolean;
+    error?: string;
+  }>;
   auditLogs: AuditLog[];
   emailHistory: EmailNotification[];
   dispatchedNotifications: DispatchedNotification[];
@@ -49,11 +72,8 @@ interface AppContextType {
   switchUser: (staffId: string) => void;
   quickSwitchRole: (role: StaffMember['role']) => void;
 
-  // Zero-Trust Onboarding, Account Activation & Password Security
-  activateAccount: (email: string, token: string, newPassword: string) => { success: boolean; error?: string };
-  requestPasswordReset: (email: string) => { success: boolean; resetToken?: string; error?: string };
-  resetPasswordWithToken: (email: string, token: string, newPassword: string) => { success: boolean; error?: string };
-  resendActivationInvite: (staffId: string) => { success: boolean; inviteLink?: string; token?: string; error?: string };
+  // Account password security
+  requestPasswordReset: (email: string) => Promise<{ success: boolean; error?: string }>;
   toggleStaffSuspension: (staffId: string) => { success: boolean; error?: string };
 
   // Leave Actions
@@ -73,10 +93,8 @@ interface AppContextType {
     compensatoryLeaveDate?: string;
   }) => { success: boolean; error?: string };
   
-  getMonthlyPermissionStats: (staffId: string, monthStr?: string) => {
+  getMonthlyPermissionUsage: (staffId: string, monthStr?: string) => {
     usedMinutes: number;
-    remainingMinutes: number;
-    maxMinutes: number;
     requestsCount: number;
   };
   
@@ -86,15 +104,13 @@ interface AppContextType {
   overrideLeave: (requestId: string, newStatus: LeaveRequest['status'], reason: string) => { success: boolean; error?: string };
 
   // Staff Directory & Management
-  addStaff: (staffData: Omit<StaffMember, 'id'>) => {
+  addStaff: (staffData: Omit<StaffMember, 'id'>) => Promise<{
     success: boolean;
     error?: string;
     newStaff?: StaffMember;
-    activationLink?: string;
-    activationToken?: string;
     directLoginLink?: string;
     initialPassword?: string;
-  };
+  }>;
   updateStaff: (id: string, staffData: Partial<StaffMember>) => { success: boolean; error?: string };
   updateOwnProfile: (profileData: {
     name: string;
@@ -103,8 +119,7 @@ interface AppContextType {
     department: Department;
     designation: string;
     portalPassword?: string;
-  }) => { success: boolean; error?: string };
-  updateStaffPassword: (staffId: string, newPassword: string) => { success: boolean; error?: string };
+  }) => Promise<{ success: boolean; error?: string }>;
   updateStaffBalance: (id: string, newBalances: StaffMember['leaveBalance']) => { success: boolean; error?: string };
   deleteStaff: (id: string) => { success: boolean; error?: string };
   toggleStaffStatus: (id: string) => void;
@@ -168,14 +183,7 @@ const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // Authentication status
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEYS.IS_AUTHENTICATED);
-      return saved === 'true';
-    } catch {
-      return false;
-    }
-  });
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
 
   // Load staff
   const [staffList, setStaffList] = useState<StaffMember[]>(() => {
@@ -184,7 +192,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const parsed: StaffMember[] = saved ? JSON.parse(saved) : INITIAL_STAFF_MEMBERS;
       const cleanList = parsed.filter(
         (s) =>
-          !['dbica-002', 'dbica-003', 'dbica-004'].includes(s.id) &&
           s.name !== 'David Anthony' &&
           s.name !== 'Kavitha Raman'
       );
@@ -242,8 +249,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         (r) =>
           !['req-001', 'req-002'].includes(r.id) &&
           r.staffName !== 'David Anthony' &&
-          r.staffName !== 'Kavitha Raman' &&
-          !['dbica-002', 'dbica-003', 'dbica-004'].includes(r.staffId)
+          r.staffName !== 'Kavitha Raman'
       );
       return cleanLeaves.map((r) => {
         if ((r.leaveType as string) === 'Earned') {
@@ -263,6 +269,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return INITIAL_LEAVE_REQUESTS;
     }
   });
+
+  const [timesheetEntries, setTimesheetEntries] = useState<TimesheetEntry[]>([]);
+  const [timesheetLoadError, setTimesheetLoadError] = useState<string | null>(null);
 
   // Load audit logs
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>(() => {
@@ -310,6 +319,60 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     () => notificationService.getLocalHistory()
   );
   const [isCloudConnected, setIsCloudConnected] = useState<boolean>(false);
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
+      if (!firebaseUser) {
+        setIsAuthenticated(false);
+        try {
+          localStorage.removeItem(STORAGE_KEYS.IS_AUTHENTICATED);
+          localStorage.removeItem(STORAGE_KEYS.CURRENT_USER_ID);
+          sessionStorage.removeItem(STORAGE_KEYS.IS_AUTHENTICATED);
+        } catch {
+          // Storage may be unavailable.
+        }
+        return;
+      }
+
+      let hasSavedPortalSession = false;
+      try {
+        hasSavedPortalSession =
+          localStorage.getItem(STORAGE_KEYS.IS_AUTHENTICATED) === 'true' ||
+          sessionStorage.getItem(STORAGE_KEYS.IS_AUTHENTICATED) === 'true';
+      } catch {
+        // Storage may be unavailable.
+      }
+      if (!hasSavedPortalSession) return;
+
+      const authenticatedStaff = staffList.find(
+        (staff) =>
+          (staff.authUid && staff.authUid === firebaseUser.uid) ||
+          staff.email.toLowerCase() === firebaseUser.email?.toLowerCase()
+      );
+      if (
+        authenticatedStaff &&
+        (authenticatedStaff.accountStatus === 'suspended' ||
+          authenticatedStaff.status === 'Inactive')
+      ) {
+        setIsAuthenticated(false);
+        try {
+          localStorage.removeItem(STORAGE_KEYS.IS_AUTHENTICATED);
+          sessionStorage.removeItem(STORAGE_KEYS.IS_AUTHENTICATED);
+        } catch {
+          // Storage may be unavailable.
+        }
+        return;
+      }
+      if (!authenticatedStaff) {
+        setIsAuthenticated(false);
+        return;
+      }
+
+      setCurrentUserId(authenticatedStaff.id);
+      setIsAuthenticated(true);
+    });
+    return unsubscribe;
+  }, [staffList]);
 
   // Subscribe to new mock email notifications
   useEffect(() => {
@@ -435,6 +498,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Find current user object
   const currentUser = staffList.find((s) => s.id === currentUserId) || staffList[0] || INITIAL_STAFF_MEMBERS[0];
 
+  useEffect(() => {
+    setTimesheetEntries([]);
+    setTimesheetLoadError(null);
+    const unsubscribe = firestoreService.subscribeTimesheetEntries(
+      (entries) => {
+        setTimesheetEntries(entries);
+        setTimesheetLoadError(null);
+        setIsCloudConnected(true);
+      },
+      (error) => {
+        console.warn('[AppContext] Real-time timesheet subscription warning:', error);
+        setTimesheetEntries([]);
+        setTimesheetLoadError('Could not load timesheets. Check your connection or account access.');
+      },
+      currentUser.role === 'Super Admin' ? undefined : currentUser.id,
+      currentUser.role === 'Super Admin' ? undefined : currentUser.email
+    );
+    return unsubscribe;
+  }, [currentUser.id, currentUser.role]);
+
   // Save to localStorage
   useEffect(() => {
     try {
@@ -512,6 +595,85 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     firestoreService.saveAuditLog(newEntry);
   };
 
+  const addTimesheetEntry = async (
+    data: {
+      workDate: string;
+      taskName: string;
+      priority: 'Low' | 'Medium' | 'High';
+      status: 'Not Started' | 'In Progress' | 'Completed';
+      workingHours: number;
+      comments: string;
+    }
+  ): Promise<{ success: boolean; error?: string }> => {
+    if (currentUser.role === 'Super Admin') {
+      return { success: false, error: 'The Director can view timesheets but cannot add entries.' };
+    }
+
+    let firebaseUser = auth.currentUser;
+    let firebaseIdentityMatches = Boolean(
+      firebaseUser &&
+      (
+        (currentUser.authUid && firebaseUser.uid === currentUser.authUid) ||
+        firebaseUser.email?.toLowerCase() === currentUser.email.toLowerCase()
+      )
+    );
+    if (!firebaseUser || !firebaseIdentityMatches) {
+      return {
+        success: false,
+        error: 'Your signed-in staff profile does not match your Firebase account. Sign out, then sign in again with your own staff email and password before submitting timesheets.',
+      };
+    }
+
+    const taskName = data.taskName.trim();
+    const comments = data.comments.trim();
+    const parsedDate = new Date(`${data.workDate}T00:00:00.000Z`);
+    const today = new Date();
+    const todayString = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(data.workDate) || Number.isNaN(parsedDate.getTime()) || parsedDate.toISOString().slice(0, 10) !== data.workDate) {
+      return { success: false, error: 'Choose a valid date for this task.' };
+    }
+    if (data.workDate > todayString) {
+      return { success: false, error: 'You can only add tasks for today or an earlier date.' };
+    }
+    if (!taskName) {
+      return { success: false, error: 'Enter a task name.' };
+    }
+    if (taskName.length > 200) {
+      return { success: false, error: 'Task names must be 200 characters or fewer.' };
+    }
+    if (!Number.isFinite(data.workingHours) || data.workingHours < 0 || data.workingHours > 24) {
+      return { success: false, error: 'Working hours must be between 0 and 24.' };
+    }
+    if (comments.length > 2000) {
+      return { success: false, error: 'Comments must be 2,000 characters or fewer.' };
+    }
+
+    const entry: TimesheetEntry = {
+      id: `timesheet-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      staffId: currentUser.id,
+      staffName: currentUser.name,
+      staffEmail: currentUser.email,
+      department: currentUser.department,
+      workDate: data.workDate,
+      taskName,
+      priority: data.priority,
+      status: data.status,
+      workingHours: data.workingHours,
+      comments,
+      createdAt: new Date().toISOString(),
+    };
+
+    const saveResult = await firestoreService.saveTimesheetEntry(entry);
+    if (!saveResult.success) {
+      return { success: false, error: saveResult.error };
+    }
+
+    setTimesheetEntries((prev) => [entry, ...prev.filter((item) => item.id !== entry.id)]);
+    addToast('Task added', 'Your task was added to the timesheet.', 'success');
+    return { success: true };
+  };
+
   // User Authentication & Session Management
   const login = async (
     identifier: string,
@@ -542,14 +704,32 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     // 1. Authenticate with Firebase Authentication (supports accounts created in Firebase Console)
     let firebaseAuthSuccess = false;
+    let firebaseAuthErrorCode: string | undefined;
     const targetEmail = matched ? matched.email : (clean.includes('@') ? clean : `${clean}@dbica.org`);
     try {
       const userCredential = await signInWithEmailAndPassword(auth, targetEmail, cleanPassword);
       if (userCredential.user) {
         firebaseAuthSuccess = true;
       }
-    } catch {
-      // Firebase Auth check failed or offline; continue to portal database password check
+    } catch (error) {
+      firebaseAuthErrorCode = (error as { code?: string }).code;
+      console.warn('[AppContext] Firebase sign-in failed:', firebaseAuthErrorCode || error);
+    }
+
+    if (!matched) {
+      try {
+        const firestoreMatch = await firestoreService.findStaffByEmail(targetEmail.toLowerCase());
+        if (firestoreMatch) {
+          matched = firestoreMatch;
+          setStaffList((prev) =>
+            prev.some((staff) => staff.id === firestoreMatch.id)
+              ? prev.map((staff) => (staff.id === firestoreMatch.id ? firestoreMatch : staff))
+              : [...prev, firestoreMatch]
+          );
+        }
+      } catch (error) {
+        console.error('[AppContext] Could not look up the staff profile in Firestore:', error);
+      }
     }
 
     // If Firebase Auth succeeded for an admin email but no staff profile matched, link to Super Admin
@@ -560,7 +740,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!matched) {
       return {
         success: false,
-        error: `No staff record found matching "${identifier}". Please verify your credentials or check your activation invite.`,
+        error: `No staff record found matching "${identifier}". Please verify your credentials or contact an administrator.`,
       };
     }
 
@@ -627,6 +807,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     }
 
+    if (!firebaseAuthSuccess) {
+      return {
+        success: false,
+        error: firebaseAuthErrorCode === 'auth/network-request-failed'
+          ? 'Could not connect to Firebase Authentication. Check your connection and try again.'
+          : firebaseAuthErrorCode === 'auth/user-not-found'
+            ? 'This email has no Firebase Authentication account. Contact the administrator to provision or verify your staff account.'
+            : 'Your portal password does not match Firebase Authentication. Use “Forgot password?” to reset it, then sign in with the new password. If no reset email arrives, contact the administrator to verify your Firebase account.',
+      };
+    }
+
     // Successful login: reset failed attempts, clear any lockout, and sync custom password
     const authUpdate = {
       failedLoginAttempts: 0,
@@ -663,86 +854,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return { success: true };
   };
 
-  // Zero-Trust First-Time Activation: Staff initializes their own private confidential password
-  const activateAccount = (
-    email: string,
-    token: string,
-    newPassword: string
-  ): { success: boolean; error?: string } => {
-    const cleanEmail = email.trim().toLowerCase();
-    const cleanToken = token.trim();
-
-    if (!cleanEmail || !cleanToken) {
-      return { success: false, error: 'Both official email and one-time activation token are required.' };
-    }
-
-    if (!newPassword || newPassword.length < 8) {
-      return { success: false, error: 'Password must be at least 8 characters long for security compliance.' };
-    }
-
-    const matched = staffList.find((s) => s.email.toLowerCase() === cleanEmail);
-    if (!matched) {
-      return { success: false, error: 'No staff record found with this email address.' };
-    }
-
-    if (matched.accountStatus === 'suspended') {
-      return { success: false, error: 'This staff account is suspended. Please contact the administrator.' };
-    }
-
-    if (!matched.activationToken || matched.activationToken !== cleanToken) {
-      return {
-        success: false,
-        error: 'Invalid activation token. Please ensure you entered the exact token from your invitation, or request a new one.',
-      };
-    }
-
-    if (matched.activationExpiresAt && new Date(matched.activationExpiresAt).getTime() < Date.now()) {
-      return {
-        success: false,
-        error: 'This activation token has expired. Please ask Super Admin or HR to reissue an invitation.',
-      };
-    }
-
-    const activationUpdates = {
-      portalPassword: newPassword,
-      accountStatus: 'active' as const,
-      status: 'Active' as const,
-      activationToken: undefined,
-      activationExpiresAt: undefined,
-      activatedAt: new Date().toISOString(),
-      failedLoginAttempts: 0,
-      lockoutUntil: undefined,
-      lastLoginAt: new Date().toISOString(),
-    };
-
-    setStaffList((prev) =>
-      prev.map((s) => (s.id === matched.id ? { ...s, ...activationUpdates } : s))
-    );
-
-    firestoreService.updateStaffFields(matched.id, activationUpdates);
-
-    createAuditEntry(
-      'ACCOUNT_ACTIVATED',
-      `Staff member ${matched.name} (${matched.email}) successfully claimed account and established confidential password.`,
-      matched.id
-    );
-
-    // Auto-login newly activated user
-    setCurrentUserId(matched.id);
-    setIsAuthenticated(true);
-    try {
-      localStorage.setItem(STORAGE_KEYS.IS_AUTHENTICATED, 'true');
-      localStorage.setItem(STORAGE_KEYS.CURRENT_USER_ID, matched.id);
-    } catch {}
-
-    addToast('Account Activated', `Welcome to DBICA, ${matched.name}! Your private password is set.`, 'success');
-    return { success: true };
-  };
-
-  // Self-Service Password Recovery
-  const requestPasswordReset = (
+  // Use Firebase's password reset action so the credential is changed in Authentication.
+  const requestPasswordReset = async (
     email: string
-  ): { success: boolean; resetToken?: string; error?: string } => {
+  ): Promise<{ success: boolean; error?: string }> => {
     const cleanEmail = email.trim().toLowerCase();
     if (!cleanEmail) {
       return { success: false, error: 'Please enter your registered DBICA email address.' };
@@ -757,141 +872,32 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return { success: false, error: 'This account has been suspended by administration. Password recovery is prohibited.' };
     }
 
-    const resetToken = 'rst-' + Math.random().toString(36).substring(2, 8).toUpperCase() + '-' + Math.random().toString(36).substring(2, 6).toUpperCase();
-    const resetExpiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString(); // 1 hour validity
-
-    const updates = { resetToken, resetExpiresAt };
-
-    setStaffList((prev) =>
-      prev.map((s) => (s.id === matched.id ? { ...s, ...updates } : s))
-    );
-
-    firestoreService.updateStaffFields(matched.id, updates);
-
-    createAuditEntry(
-      'PASSWORD_RESET_REQUESTED',
-      `Self-service password recovery token generated for ${matched.name} (${matched.email})`,
-      matched.id
-    );
-
-    notificationService.dispatchCustom(
-      matched.name,
-      matched.phone,
-      matched.email,
-      'both',
-      'DBICA Portal - Password Reset Security Token',
-      `Dear ${matched.name}, your one-time password reset code is: ${resetToken}. This code expires in 1 hour. Use it on the login page to establish a new password.`,
-      { staffId: matched.id, staffName: matched.name, department: matched.department }
-    );
-
-    addToast('Security Code Dispatched', `Password reset token sent to ${matched.email}`, 'info');
-    return { success: true, resetToken };
-  };
-
-  // Set new password using verified reset token
-  const resetPasswordWithToken = (
-    email: string,
-    token: string,
-    newPassword: string
-  ): { success: boolean; error?: string } => {
-    const cleanEmail = email.trim().toLowerCase();
-    const cleanToken = token.trim();
-
-    if (!cleanEmail || !cleanToken) {
-      return { success: false, error: 'Email and recovery code are required.' };
+    try {
+      await sendPasswordResetEmail(auth, matched.email);
+      createAuditEntry(
+        'PASSWORD_RESET_REQUESTED',
+        `Firebase password reset email requested for ${matched.name} (${matched.email})`,
+        matched.id
+      );
+      addToast('Password Reset Email Sent', `Check ${matched.email} for Firebase’s password reset link.`, 'success');
+      return { success: true };
+    } catch (error) {
+      const code = (error as { code?: string }).code;
+      console.error('[AppContext] Firebase password reset email failed:', code || error);
+      if (code === 'auth/user-not-found') {
+        return {
+          success: false,
+          error: 'No Firebase Authentication account exists for this email. Contact the administrator to provision or verify your account.',
+        };
+      }
+      if (code === 'auth/invalid-email') {
+        return { success: false, error: 'Firebase rejected this email address. Contact the administrator to verify your staff email.' };
+      }
+      if (code === 'auth/too-many-requests') {
+        return { success: false, error: 'Too many reset attempts. Wait a while before requesting another email.' };
+      }
+      return { success: false, error: 'Firebase could not send the reset email. Check your connection and try again.' };
     }
-
-    if (!newPassword || newPassword.length < 8) {
-      return { success: false, error: 'New password must be at least 8 characters long.' };
-    }
-
-    const matched = staffList.find((s) => s.email.toLowerCase() === cleanEmail);
-    if (!matched) {
-      return { success: false, error: 'No staff record found with this email address.' };
-    }
-
-    if (matched.accountStatus === 'suspended') {
-      return { success: false, error: 'This account is suspended. Contact administration.' };
-    }
-
-    if (!matched.resetToken || matched.resetToken !== cleanToken) {
-      return { success: false, error: 'Invalid password recovery code. Please request a fresh code.' };
-    }
-
-    if (matched.resetExpiresAt && new Date(matched.resetExpiresAt).getTime() < Date.now()) {
-      return { success: false, error: 'Recovery code has expired. Please request a new one.' };
-    }
-
-    const updates = {
-      portalPassword: newPassword,
-      resetToken: undefined,
-      resetExpiresAt: undefined,
-      failedLoginAttempts: 0,
-      lockoutUntil: undefined,
-    };
-
-    setStaffList((prev) =>
-      prev.map((s) => (s.id === matched.id ? { ...s, ...updates } : s))
-    );
-
-    firestoreService.updateStaffFields(matched.id, updates);
-
-    createAuditEntry(
-      'PASSWORD_RESET_COMPLETED',
-      `Staff member ${matched.name} (${matched.email}) successfully reset password using recovery token.`,
-      matched.id
-    );
-
-    addToast('Password Updated', 'Your confidential password has been updated. You can now sign in.', 'success');
-    return { success: true };
-  };
-
-  // Resend or generate new onboarding invitation token
-  const resendActivationInvite = (
-    staffId: string
-  ): { success: boolean; inviteLink?: string; token?: string; error?: string } => {
-    if (currentUser.role !== 'Super Admin' && currentUser.role !== 'HR') {
-      return { success: false, error: 'Only Super Admin and HR can issue account invitations.' };
-    }
-
-    const target = staffList.find((s) => s.id === staffId);
-    if (!target) return { success: false, error: 'Staff member not found.' };
-
-    const activationToken = 'act-' + Math.random().toString(36).substring(2, 9).toUpperCase() + '-' + Math.random().toString(36).substring(2, 7).toUpperCase();
-    const activationExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
-
-    const updates = {
-      accountStatus: 'invited' as const,
-      activationToken,
-      activationExpiresAt,
-    };
-
-    setStaffList((prev) =>
-      prev.map((s) => (s.id === staffId ? { ...s, ...updates } : s))
-    );
-
-    firestoreService.updateStaffFields(staffId, updates);
-
-    createAuditEntry(
-      'ACTIVATION_INVITE_ISSUED',
-      `Regenerated onboarding activation invite for ${target.name} (${target.email})`,
-      staffId
-    );
-
-    notificationService.dispatchCustom(
-      target.name,
-      target.phone,
-      target.email,
-      'both',
-      'DBICA Staff Portal - Onboarding Invitation & Password Setup',
-      `Dear ${target.name}, your DBICA staff portal profile is ready. Use activation token: ${activationToken} or click your personal link to set your password.`,
-      { staffId: target.id, staffName: target.name, department: target.department }
-    );
-
-    const inviteLink = `${window.location.origin}/#activate?token=${activationToken}&email=${encodeURIComponent(target.email)}`;
-
-    addToast('Invitation Issued', `Onboarding link dispatched to ${target.email}`, 'success');
-    return { success: true, inviteLink, token: activationToken };
   };
 
   // Super Admin Account Suspension / Reactivation for Safeguarding
@@ -996,6 +1002,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
 
     setIsAuthenticated(false);
+    firebaseSignOut(auth).catch((error) => {
+      console.error('[AppContext] Could not sign out of Firebase Authentication:', error);
+    });
     try {
       localStorage.removeItem(STORAGE_KEYS.IS_AUTHENTICATED);
       sessionStorage.removeItem(STORAGE_KEYS.IS_AUTHENTICATED);
@@ -1026,8 +1035,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  // Monthly Permission Stats (Max 60 mins / month institutional allowance)
-  const getMonthlyPermissionStats = (staffId: string, monthStr?: string) => {
+  // Permission requests are tracked for visibility only; there is no monthly quota.
+  const getMonthlyPermissionUsage = (staffId: string, monthStr?: string) => {
     const targetMonth = monthStr ? monthStr.slice(0, 7) : new Date().toISOString().slice(0, 7);
     const matchingRequests = leaveRequests.filter(
       (r) =>
@@ -1038,12 +1047,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         r.startDate.startsWith(targetMonth)
     );
     const usedMinutes = matchingRequests.reduce((sum, r) => sum + (r.permissionMinutes || 60), 0);
-    const maxMinutes = 60;
-    const remainingMinutes = Math.max(0, maxMinutes - usedMinutes);
     return {
       usedMinutes,
-      remainingMinutes,
-      maxMinutes,
       requestsCount: matchingRequests.length,
     };
   };
@@ -1078,28 +1083,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     workedPeriodType?: 'After Office Hours' | 'Weekend Duty (Saturday/Sunday)' | 'Holiday Duty' | 'Special Event / Official Duty' | string;
     compensatoryLeaveDate?: string;
   }) => {
-    // --- SPECIAL HANDLING FOR PERMISSION (MAX 60 MINS/MONTH) ---
+    // Permission requests are reviewed individually; no monthly quota applies.
     if (leaveType === 'Permission') {
       if (!startDate) {
         return { success: false, error: 'Please choose the date for the permission.' };
       }
 
-      const minutes = permissionMinutes || 60;
-      if (minutes <= 0) {
-        return { success: false, error: 'Permission duration must be at least 1 minute.' };
+      const startTime = permissionStartTime || '09:30';
+      const endTime = permissionEndTime || '10:30';
+      const startMinutes = parseTimeToMinutes(startTime);
+      const endMinutes = parseTimeToMinutes(endTime);
+      if (startMinutes === null || endMinutes === null || endMinutes <= startMinutes) {
+        return { success: false, error: 'Enter a valid time window with the end time after the start time.' };
       }
-      if (minutes > 60) {
-        return { success: false, error: 'Maximum permission duration per application is 60 minutes.' };
-      }
-
-      const monthKey = startDate.slice(0, 7); // YYYY-MM
-      const stats = getMonthlyPermissionStats(currentUser.id, monthKey);
-
-      if (stats.usedMinutes + minutes > 60) {
-        return {
-          success: false,
-          error: `Maximum time for permissions per month is 60 minutes. You have already used ${stats.usedMinutes} minutes for ${monthKey}. Remaining allowance: ${stats.remainingMinutes} minutes.`,
-        };
+      const minutes = endMinutes - startMinutes;
+      if (permissionMinutes !== undefined && permissionMinutes !== minutes) {
+        return { success: false, error: 'Permission duration must match the selected time window.' };
       }
 
       const newRequest: LeaveRequest = {
@@ -1113,8 +1112,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         endDate: startDate,
         totalDays: 0,
         permissionMinutes: minutes,
-        permissionStartTime: permissionStartTime || '09:30 AM',
-        permissionEndTime: permissionEndTime || '10:30 AM',
+        permissionStartTime: startTime,
+        permissionEndTime: endTime,
         reason,
         emergencyContact,
         status: 'Pending',
@@ -1132,14 +1131,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       firestoreService.saveLeaveRequest(newRequest);
 
       // Dispatch notifications
-      const applicantStaff = staffList.find((s) => s.id === currentUser.id);
       const hodStaff =
         staffList.find((s) => s.department === currentUser.department && s.role === 'Manager') ||
         staffList.find((s) => s.role === 'HR');
 
       notificationService.dispatchLeaveSubmitted(
         newRequest,
-        applicantStaff?.phone,
         hodStaff?.phone,
         hodStaff?.name,
         hodStaff?.email
@@ -1147,7 +1144,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       addToast(
         'Permission Application Submitted',
-        `Requested ${minutes} minutes permission on ${startDate}. Dispatched via WhatsApp and Email.`,
+        `Requested ${minutes} minutes permission on ${startDate}. Routed to the reviewers for approval.`,
         'success'
       );
       return { success: true };
@@ -1220,14 +1217,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       firestoreService.saveLeaveRequest(newRequest);
       mockEmailService.notifyLeaveSubmitted(newRequest);
 
-      const applicantStaff = staffList.find((s) => s.id === currentUser.id);
       const hodStaff =
         staffList.find((s) => s.department === currentUser.department && s.role === 'Manager') ||
         staffList.find((s) => s.role === 'HR');
 
       notificationService.dispatchLeaveSubmitted(
         newRequest,
-        applicantStaff?.phone,
         hodStaff?.phone,
         hodStaff?.name,
         hodStaff?.email
@@ -1303,15 +1298,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // Dispatch mock email notifications
     mockEmailService.notifyLeaveSubmitted(newRequest);
 
-    // Dispatch official Email and WhatsApp confirmation to applicant & HoD acknowledgement
-    const applicantStaff = staffList.find((s) => s.id === currentUser.id);
+    // Notify reviewers; the applicant is notified after a decision is recorded.
     const hodStaff =
       staffList.find((s) => s.department === currentUser.department && s.role === 'Manager') ||
       staffList.find((s) => s.role === 'HR');
 
     notificationService.dispatchLeaveSubmitted(
       newRequest,
-      applicantStaff?.phone,
       hodStaff?.phone,
       hodStaff?.name,
       hodStaff?.email
@@ -1319,7 +1312,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     addToast(
       'Leave Application Submitted',
-      `Confirmation sent via WhatsApp and Email for ${totalDays} day(s) of ${leaveType} Leave.`,
+      `${totalDays} day(s) of ${leaveType} leave routed to the reviewers for approval.`,
       'success'
     );
     return { success: true };
@@ -1642,7 +1635,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   // Staff CRUD
-  const addStaff = (staffData: Omit<StaffMember, 'id'>) => {
+  const addStaff = async (staffData: Omit<StaffMember, 'id'>) => {
     if (currentUser.role !== 'Super Admin' && currentUser.role !== 'HR') {
       return { success: false, error: 'Permission denied: Only Super Admin and HR can add staff.' };
     }
@@ -1655,7 +1648,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return { success: false, error: 'A staff member with this email already exists.' };
     }
 
-    const newId = `dbica-${String(staffList.length + 1).padStart(3, '0')}`;
+    const existingIds = new Set(staffList.map((staff) => staff.id));
+    let nextStaffNumber =
+      staffList.reduce((highest, staff) => {
+        const match = /^dbica-(\d+)$/.exec(staff.id);
+        return match ? Math.max(highest, Number(match[1])) : highest;
+      }, 0) + 1;
+    let newId = `dbica-${String(nextStaffNumber).padStart(3, '0')}`;
+    while (existingIds.has(newId)) {
+      nextStaffNumber += 1;
+      newId = `dbica-${String(nextStaffNumber).padStart(3, '0')}`;
+    }
     const avatarBgs = [
       'bg-blue-600',
       'bg-indigo-600',
@@ -1667,33 +1670,70 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     ];
     const avatarBg = avatarBgs[Math.floor(Math.random() * avatarBgs.length)];
 
-    // Initial Password Setup:
-    // Allows Super Admin to provide an instant password (defaults to 'dbica@2026')
-    // while also issuing an activation token for self-service recovery.
+    // Staff accounts are provisioned in Firebase Authentication with this initial password.
     const initialPassword = staffData.portalPassword && staffData.portalPassword.trim()
       ? staffData.portalPassword.trim()
       : 'dbica@2026';
 
-    const activationToken = 'act-' + Math.random().toString(36).substring(2, 9).toUpperCase() + '-' + Math.random().toString(36).substring(2, 7).toUpperCase();
-    const activationExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(); // 7 days validity
-
     const newStaff: StaffMember = {
       ...staffData,
+      email: staffData.email.trim().toLowerCase(),
       id: newId,
       avatarBg,
       status: staffData.status || 'Active',
       accountStatus: 'active',
-      activationToken,
-      activationExpiresAt,
       portalPassword: initialPassword,
       mustChangePassword: staffData.mustChangePassword !== false,
     };
 
+    if (initialPassword.length < 6) {
+      return {
+        success: false,
+        error: 'Firebase Authentication requires passwords to be at least 6 characters long.',
+      };
+    }
+
+    let authUid: string;
+    try {
+      authUid = await createStaffAuthAccount(newStaff.email, initialPassword);
+    } catch (error) {
+      const code = (error as { code?: string }).code;
+      if (code === 'auth/email-already-in-use') {
+        return {
+          success: false,
+          error: 'This email already has a Firebase Authentication account. Use a different email or resolve the existing account before creating this staff member.',
+        };
+      }
+      if (code === 'auth/weak-password') {
+        return {
+          success: false,
+          error: 'Firebase rejected this password. Please choose a stronger password with at least 6 characters.',
+        };
+      }
+      console.error('[AppContext] Could not create the Firebase Authentication account:', error);
+      return {
+        success: false,
+        error: 'Could not create the Firebase Authentication account. Check that Email/Password sign-in is enabled in Firebase Authentication and try again.',
+      };
+    }
+
+    newStaff.authUid = authUid;
+    const saved = await firestoreService.upsertStaff(newStaff);
+    if (!saved) {
+      try {
+        await deleteStaffAuthAccount(newStaff.email, initialPassword);
+      } catch (error) {
+        console.error('[AppContext] Failed to roll back the Firebase Authentication account:', error);
+      }
+      return {
+        success: false,
+        error: 'Could not save the staff member to Firestore. Check your connection and database permissions, then try again.',
+      };
+    }
+
     setStaffList((prev) => [...prev, newStaff]);
-    firestoreService.upsertStaff(newStaff);
 
     const directLoginLink = `${window.location.origin}/#login?email=${encodeURIComponent(newStaff.email)}`;
-    const activationLink = `${window.location.origin}/#activate?token=${activationToken}&email=${encodeURIComponent(newStaff.email)}`;
 
     createAuditEntry(
       'STAFF_CREATED',
@@ -1718,7 +1758,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       `${newStaff.name} created. Credentials ready to share with staff member.`,
       'success'
     );
-    return { success: true, newStaff, activationLink, activationToken, directLoginLink, initialPassword };
+    return { success: true, newStaff, directLoginLink, initialPassword };
   };
 
   const updateStaff = (id: string, staffData: Partial<StaffMember>) => {
@@ -1728,6 +1768,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const target = staffList.find((s) => s.id === id);
     if (!target) return { success: false, error: 'Staff member not found.' };
+    if (staffData.email && staffData.email.trim().toLowerCase() !== target.email.toLowerCase()) {
+      return {
+        success: false,
+        error: 'Changing a staff sign-in email must be coordinated with Firebase Authentication. Update the Firebase account first, then update the staff profile.',
+      };
+    }
 
     // HR cannot change Super Admin role or modify Director's primary profile
     if (currentUser.role === 'HR' && target.role === 'Super Admin' && staffData.role && staffData.role !== 'Super Admin') {
@@ -1745,30 +1791,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return { success: true };
   };
 
-  const updateStaffPassword = (staffId: string, newPassword: string) => {
-    if (!newPassword || newPassword.trim().length < 4) {
-      return { success: false, error: 'Password must be at least 4 characters long.' };
-    }
-
-    setStaffList((prev) =>
-      prev.map((s) => (s.id === staffId ? { ...s, portalPassword: newPassword.trim() } : s))
-    );
-
-    firestoreService.updateStaffFields(staffId, { portalPassword: newPassword.trim() });
-    createAuditEntry('PASSWORD_UPDATED', `Updated portal authentication password for staff ID ${staffId}`, staffId);
-    addToast('Password Saved', 'Account password updated successfully in database.', 'success');
-    return { success: true };
-  };
-
   // User Self Profile Update (persisted in localStorage & Firestore, strictly for own profile)
-  const updateOwnProfile = (profileData: {
+  const updateOwnProfile = async (profileData: {
     name: string;
     email: string;
     phone: string;
     department: Department;
     designation: string;
     portalPassword?: string;
-  }) => {
+  }): Promise<{ success: boolean; error?: string }> => {
     // Strict check: Target is always current user
     const targetId = currentUser.id;
     const target = staffList.find((s) => s.id === targetId);
@@ -1794,6 +1825,40 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
     if (existingEmail) {
       return { success: false, error: 'This email address is already in use by another staff member.' };
+    }
+    if (profileData.email.trim().toLowerCase() !== target.email.toLowerCase()) {
+      return { success: false, error: 'Changing your sign-in email requires an administrator to update Firebase Authentication and your staff profile together.' };
+    }
+
+    if (profileData.portalPassword?.trim()) {
+      if (profileData.portalPassword.trim().length < 6) {
+        return { success: false, error: 'Firebase passwords must be at least 6 characters long.' };
+      }
+
+      const firebaseUser = auth.currentUser;
+      const identityMatches = Boolean(
+        firebaseUser &&
+        (
+          (target.authUid && firebaseUser.uid === target.authUid) ||
+          firebaseUser.email?.toLowerCase() === target.email.toLowerCase()
+        )
+      );
+      if (!firebaseUser || !identityMatches) {
+        return { success: false, error: 'Sign in as this staff member before changing the password, or use “Forgot password?” on the login page.' };
+      }
+
+      try {
+        await updatePassword(firebaseUser, profileData.portalPassword.trim());
+      } catch (error) {
+        const code = (error as { code?: string }).code;
+        console.error('[AppContext] Firebase password update failed:', code || error);
+        return {
+          success: false,
+          error: code === 'auth/requires-recent-login'
+            ? 'For security, sign out and sign in again before changing your password, or use “Forgot password?” on the login page.'
+            : 'Firebase could not update your password. Use “Forgot password?” on the login page and try again.',
+        };
+      }
     }
 
     const updates: Partial<StaffMember> = {
@@ -1836,7 +1901,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       targetId
     );
 
-    addToast('Profile Updated', 'Your profile and password have been saved to the database.', 'success');
+    addToast('Profile Updated', 'Your profile has been saved. Any password change was updated in Firebase Authentication.', 'success');
     return { success: true };
   };
 
@@ -1880,7 +1945,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     firestoreService.deleteStaff(id);
 
     createAuditEntry('STAFF_DELETED', `Deleted staff profile for ${target.name} (${target.email})`, id);
-    addToast('Staff Deleted', `${target.name} has been removed from the database.`, 'info');
+    addToast('Staff Profile Deleted', `${target.name} has been removed from the staff database. Delete their Firebase Authentication account separately.`, 'warning');
     return { success: true };
   };
 
@@ -2318,6 +2383,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         currentUser,
         staffList,
         leaveRequests,
+        timesheetEntries,
+        timesheetLoadError,
+        addTimesheetEntry,
         auditLogs,
         emailHistory,
         dispatchedNotifications,
@@ -2334,13 +2402,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         logout,
         switchUser,
         quickSwitchRole,
-        activateAccount,
         requestPasswordReset,
-        resetPasswordWithToken,
-        resendActivationInvite,
         toggleStaffSuspension,
         applyLeave,
-        getMonthlyPermissionStats,
+        getMonthlyPermissionUsage,
         cancelLeave,
         approveLeave,
         rejectLeave,
@@ -2348,7 +2413,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         addStaff,
         updateStaff,
         updateOwnProfile,
-        updateStaffPassword,
         updateStaffBalance,
         deleteStaff,
         toggleStaffStatus,

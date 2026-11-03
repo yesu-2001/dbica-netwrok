@@ -7,16 +7,13 @@ import {
   AlertTriangle,
   ChevronLeft,
   ChevronRight,
-  Sparkles,
   CheckCircle,
-  FileText,
-  Building,
 } from 'lucide-react';
 import { formatDate, formatDateRange, doDateRangesOverlap, getTodayDateString } from '../utils/dateUtils';
 import { Department } from '../types';
 
 export const OverviewView: React.FC<{ onApplyLeave: () => void }> = ({ onApplyLeave }) => {
-  const { staffList, leaveRequests, currentUser, setActiveTab, departments: appDepartments } = useApp();
+  const { leaveRequests, currentUser, setActiveTab, departments: appDepartments } = useApp();
 
   // Real-time current date anchor (YYYY-MM-DD)
   const todayStr = useMemo(() => getTodayDateString(), []);
@@ -29,15 +26,20 @@ export const OverviewView: React.FC<{ onApplyLeave: () => void }> = ({ onApplyLe
   const [selectedCalendarDay, setSelectedCalendarDay] = useState<string>(() => getTodayDateString());
   const [departmentFilter, setDepartmentFilter] = useState<string>('All');
 
-  // Stats calculation
-  const activeStaffCount = staffList.filter((s) => s.status === 'Active').length;
-  const pendingRequestsCount = leaveRequests.filter((r) => r.status === 'Pending').length;
+  const isStaff = currentUser.role === 'Staff';
+  const isManager = currentUser.role === 'Manager';
+  const scopedLeaveRequests = leaveRequests.filter((request) => {
+    if (isStaff) return request.staffId === currentUser.id;
+    if (isManager) return request.department === currentUser.department;
+    return true;
+  });
+  const pendingRequests = scopedLeaveRequests.filter((request) => request.status === 'Pending');
 
-  const onLeaveToday = leaveRequests.filter(
+  const onLeaveToday = scopedLeaveRequests.filter(
     (r) => r.status === 'Approved' && r.startDate <= todayStr && r.endDate >= todayStr
   );
 
-  const approvedThisMonth = leaveRequests.filter((r) => {
+  const approvedThisMonth = scopedLeaveRequests.filter((r) => {
     if (r.status !== 'Approved') return false;
     const start = new Date(r.startDate);
     return (
@@ -45,6 +47,18 @@ export const OverviewView: React.FC<{ onApplyLeave: () => void }> = ({ onApplyLe
       start.getMonth() === currentMonthDate.getMonth()
     );
   }).length;
+
+  const upcomingDate = new Date(`${todayStr}T00:00:00`);
+  upcomingDate.setDate(upcomingDate.getDate() + 14);
+  const upcomingDateStr = getTodayDateString(upcomingDate);
+  const upcomingLeaves = scopedLeaveRequests
+    .filter(
+      (request) =>
+        request.status === 'Approved' &&
+        request.startDate >= todayStr &&
+        request.startDate <= upcomingDateStr
+    )
+    .sort((a, b) => a.startDate.localeCompare(b.startDate));
 
   // Department clash detection:
   // Find overlaps between staff in the same department
@@ -58,8 +72,12 @@ export const OverviewView: React.FC<{ onApplyLeave: () => void }> = ({ onApplyLe
       status: string;
     }[] = [];
 
-    const activeLeaves = leaveRequests.filter(
-      (r) => r.status === 'Approved' || r.status === 'Pending'
+    if (isStaff) return [];
+
+    const activeLeaves = scopedLeaveRequests.filter(
+      (r) =>
+        (r.status === 'Approved' || r.status === 'Pending') &&
+        r.endDate >= todayStr
     );
 
     for (let i = 0; i < activeLeaves.length; i++) {
@@ -82,7 +100,7 @@ export const OverviewView: React.FC<{ onApplyLeave: () => void }> = ({ onApplyLe
       }
     }
     return clashes;
-  }, [leaveRequests]);
+  }, [scopedLeaveRequests, isStaff, todayStr]);
 
   // Calendar days generation
   const year = currentMonthDate.getFullYear();
@@ -139,7 +157,7 @@ export const OverviewView: React.FC<{ onApplyLeave: () => void }> = ({ onApplyLe
   // Leaves for a particular day
   const getLeavesForDate = (dateStr: string) => {
     if (!dateStr) return [];
-    return leaveRequests.filter((r) => {
+    return scopedLeaveRequests.filter((r) => {
       if (departmentFilter !== 'All' && r.department !== departmentFilter) return false;
       return (
         (r.status === 'Approved' || r.status === 'Pending') &&
@@ -153,69 +171,123 @@ export const OverviewView: React.FC<{ onApplyLeave: () => void }> = ({ onApplyLe
 
   // Departments list for filter
   const departments: string[] = appDepartments.map((d) => d.name);
+  const myLeaveBalance =
+    (currentUser.leaveBalance.casual ?? 0) +
+    (currentUser.leaveBalance.sick ?? 0) +
+    (currentUser.leaveBalance.compensatory ?? currentUser.leaveBalance.earned ?? 0);
+  const staffOnLeaveToday = new Set(onLeaveToday.map((request) => request.staffId)).size;
+  const totalUpcomingLeaveDays = upcomingLeaves.reduce((sum, request) => sum + request.totalDays, 0);
+  const metrics = isStaff
+    ? [
+        {
+          label: 'My Pending Requests',
+          value: pendingRequests.length,
+          description: 'Awaiting a decision',
+          icon: <Clock className="w-6 h-6" />,
+          tone: 'amber',
+        },
+        {
+          label: 'My Leave Balance',
+          value: `${myLeaveBalance} days`,
+          description: 'Across all leave types',
+          icon: <CalendarIcon className="w-6 h-6" />,
+          tone: 'blue',
+        },
+        {
+          label: 'Approved This Month',
+          value: approvedThisMonth,
+          description: 'Your approved requests',
+          icon: <CheckCircle className="w-6 h-6" />,
+          tone: 'emerald',
+        },
+        {
+          label: 'Upcoming Leave Days',
+          value: totalUpcomingLeaveDays,
+          description: 'Approved in the next 14 days',
+          icon: <CalendarIcon className="w-6 h-6" />,
+          tone: 'purple',
+        },
+      ]
+    : [
+        {
+          label: isManager ? 'Department Pending Requests' : 'Pending Requests',
+          value: pendingRequests.length,
+          description: isManager ? `For ${currentUser.department}` : 'Across all departments',
+          icon: <Clock className="w-6 h-6" />,
+          tone: 'amber',
+        },
+        {
+          label: isManager ? 'Department Staff Away Today' : 'Staff Away Today',
+          value: staffOnLeaveToday,
+          description: isManager ? `Approved leave • ${currentUser.department}` : 'Approved leave',
+          icon: <Users className="w-6 h-6" />,
+          tone: 'emerald',
+        },
+        {
+          label: isManager ? 'Upcoming Department Leaves' : 'Upcoming Leaves',
+          value: upcomingLeaves.length,
+          description: `${totalUpcomingLeaveDays} leave days in the next 14 days`,
+          icon: <CalendarIcon className="w-6 h-6" />,
+          tone: 'blue',
+        },
+        {
+          label: 'Schedule Conflicts',
+          value: departmentalClashes.length,
+          description: 'Overlapping requests to review',
+          icon: <AlertTriangle className="w-6 h-6" />,
+          tone: 'purple',
+        },
+      ];
+  const metricToneClasses: Record<string, { icon: string; value: string }> = {
+    amber: { icon: 'bg-amber-50 text-amber-600', value: 'text-amber-600' },
+    blue: { icon: 'bg-blue-50 text-blue-600', value: 'text-blue-700' },
+    emerald: { icon: 'bg-emerald-50 text-emerald-600', value: 'text-emerald-700' },
+    purple: { icon: 'bg-purple-50 text-purple-600', value: 'text-purple-700' },
+  };
 
   return (
     <div className="space-y-6">
       {/* Metric Tiles */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs flex items-center justify-between">
-          <div>
-            <span className="text-xs text-slate-500 font-medium uppercase tracking-wider">Active Staff</span>
-            <div className="text-2xl font-bold text-slate-900 mt-1">{activeStaffCount}</div>
-            <span className="text-[11px] text-slate-400 mt-0.5 block">DBICA Faculty & Officers</span>
+        {metrics.map((metric, index) => (
+          <div
+            key={metric.label}
+            className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs flex items-center justify-between"
+          >
+            <div>
+              <span className="text-xs text-slate-500 font-medium uppercase tracking-wider">{metric.label}</span>
+              <div className={`text-2xl font-bold mt-1 ${metricToneClasses[metric.tone].value}`}>
+                {metric.value}
+              </div>
+              <span className="text-[11px] text-slate-400 mt-0.5 block">
+                {index === 0 && pendingRequests.length > 0 ? (
+                  isStaff ? (
+                    'Awaiting manager review'
+                  ) : (
+                    <button
+                      onClick={() => setActiveTab('requests')}
+                      className="text-blue-600 hover:underline font-medium"
+                    >
+                      Review requests →
+                    </button>
+                  )
+                ) : index === 0 && isStaff ? (
+                  <button
+                    onClick={onApplyLeave}
+                    className="text-blue-600 hover:underline font-medium"
+                  >
+                    Apply for leave →
+                  </button>
+                ) : (
+                  metric.description
+                )}
+              </span>
+            </div>
+            <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${metricToneClasses[metric.tone].icon}`}>
+              {metric.icon}
+            </div>
           </div>
-          <div className="w-12 h-12 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
-            <Users className="w-6 h-6" />
-          </div>
-        </div>
-
-        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs flex items-center justify-between">
-          <div>
-            <span className="text-xs text-slate-500 font-medium uppercase tracking-wider">Pending Requests</span>
-            <div className="text-2xl font-bold text-amber-600 mt-1">{pendingRequestsCount}</div>
-            <span className="text-[11px] text-slate-400 mt-0.5 block">
-              {currentUser.role !== 'Staff' ? (
-                <button
-                  onClick={() => setActiveTab('requests')}
-                  className="text-blue-600 hover:underline font-medium"
-                >
-                  Review approvals →
-                </button>
-              ) : (
-                'Awaiting manager review'
-              )}
-            </span>
-          </div>
-          <div className="w-12 h-12 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center">
-            <Clock className="w-6 h-6" />
-          </div>
-        </div>
-
-        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs flex items-center justify-between">
-          <div>
-            <span className="text-xs text-slate-500 font-medium uppercase tracking-wider">On Leave Today</span>
-            <div className="text-2xl font-bold text-slate-900 mt-1">{onLeaveToday.length}</div>
-            <span className="text-[11px] text-slate-400 mt-0.5 block">
-              {onLeaveToday.length > 0
-                ? onLeaveToday.map((r) => r.staffName.split(' ')[0]).join(', ')
-                : 'All present today'}
-            </span>
-          </div>
-          <div className="w-12 h-12 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
-            <CheckCircle className="w-6 h-6" />
-          </div>
-        </div>
-
-        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs flex items-center justify-between">
-          <div>
-            <span className="text-xs text-slate-500 font-medium uppercase tracking-wider">Approved in {monthLabel.split(' ')[0]}</span>
-            <div className="text-2xl font-bold text-slate-900 mt-1">{approvedThisMonth}</div>
-            <span className="text-[11px] text-slate-400 mt-0.5 block">Scheduled leaves</span>
-          </div>
-          <div className="w-12 h-12 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center">
-            <CalendarIcon className="w-6 h-6" />
-          </div>
-        </div>
+        ))}
       </div>
 
       {/* Operational Overlap / Clash Warning Banner */}
@@ -272,7 +344,8 @@ export const OverviewView: React.FC<{ onApplyLeave: () => void }> = ({ onApplyLe
             <div className="flex items-center gap-3">
               <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
                 <CalendarIcon className="w-5 h-5 text-blue-600" />
-                <span>{monthLabel}</span>
+                <span>{isStaff ? 'My Leave Calendar' : isManager ? 'Department Leave Calendar' : 'Institution Leave Calendar'}</span>
+                <span className="text-xs font-medium text-slate-500">{monthLabel}</span>
               </h2>
               <div className="flex items-center rounded-lg border border-slate-200 p-0.5 bg-slate-50 gap-0.5">
                 <button
@@ -301,22 +374,23 @@ export const OverviewView: React.FC<{ onApplyLeave: () => void }> = ({ onApplyLe
               </div>
             </div>
 
-            {/* Department Filter */}
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-slate-500 font-medium">Department:</span>
-              <select
-                value={departmentFilter}
-                onChange={(e) => setDepartmentFilter(e.target.value)}
-                className="text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-500 font-medium"
-              >
-                <option value="All">All Departments</option>
-                {departments.map((dept) => (
-                  <option key={dept} value={dept}>
-                    {dept}
-                  </option>
-                ))}
-              </select>
-            </div>
+            {!isStaff && !isManager && (
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-slate-500 font-medium">Department:</span>
+                <select
+                  value={departmentFilter}
+                  onChange={(e) => setDepartmentFilter(e.target.value)}
+                  className="text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-500 font-medium"
+                >
+                  <option value="All">All Departments</option>
+                  {departments.map((dept) => (
+                    <option key={dept} value={dept}>
+                      {dept}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
           </div>
 
           {/* Day of Week Headers */}
@@ -424,7 +498,13 @@ export const OverviewView: React.FC<{ onApplyLeave: () => void }> = ({ onApplyLe
                 <span>Today Indicator</span>
               </div>
             </div>
-            <span>Click any day to inspect staffing details</span>
+            <span>
+              {isStaff
+                ? 'Select a day to view your leave requests'
+                : isManager
+                ? `Select a day to view ${currentUser.department} coverage`
+                : 'Select a day to inspect staffing details'}
+            </span>
           </div>
         </div>
 
@@ -450,9 +530,13 @@ export const OverviewView: React.FC<{ onApplyLeave: () => void }> = ({ onApplyLe
               {selectedDayLeaves.length === 0 ? (
                 <div className="text-center py-8 text-slate-400">
                   <CheckCircle className="w-8 h-8 mx-auto text-emerald-400/80 mb-2" />
-                  <p className="text-xs font-medium text-slate-600">Full Staff Availability</p>
+                  <p className="text-xs font-medium text-slate-600">
+                    {isStaff ? 'No Leave Requests' : 'Full Staff Availability'}
+                  </p>
                   <p className="text-[11px] text-slate-400 mt-0.5">
-                    No approved or pending leaves on this date.
+                    {isStaff
+                      ? 'You have no approved or pending leave on this date.'
+                      : 'No approved or pending leaves on this date.'}
                   </p>
                 </div>
               ) : (
@@ -507,26 +591,28 @@ export const OverviewView: React.FC<{ onApplyLeave: () => void }> = ({ onApplyLe
           <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
-                Upcoming Staff Leaves
+                {isStaff ? 'My Upcoming Leaves' : isManager ? 'Upcoming Department Leaves' : 'Upcoming Staff Leaves'}
               </h3>
               <span className="text-[11px] text-slate-400">Next 14 days</span>
             </div>
 
             <div className="mt-3 divide-y divide-slate-100 text-xs">
-              {leaveRequests.filter((r) => r.status === 'Approved' && r.startDate >= todayStr).length === 0 ? (
+              {upcomingLeaves.length === 0 ? (
                 <div className="py-7 text-center text-slate-400 text-xs space-y-1.5">
                   <div className="w-8 h-8 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto">
                     <CheckCircle className="w-4 h-4" />
                   </div>
-                  <p className="font-semibold text-slate-700">No Upcoming Staff Leaves</p>
+                  <p className="font-semibold text-slate-700">
+                    {isStaff ? 'No Upcoming Leave' : 'No Upcoming Staff Leaves'}
+                  </p>
                   <p className="text-[11px] text-slate-400 max-w-xs mx-auto">
-                    Full faculty presence. Scheduled leaves will display here automatically.
+                    {isStaff
+                      ? 'Your approved leave in the next 14 days will appear here.'
+                      : 'Approved leave in the next 14 days will appear here.'}
                   </p>
                 </div>
               ) : (
-                leaveRequests
-                  .filter((r) => r.status === 'Approved' && r.startDate >= todayStr)
-                  .slice(0, 5)
+                upcomingLeaves.slice(0, 5)
                   .map((req) => (
                     <div key={req.id} className="py-2.5 flex items-center justify-between">
                       <div>

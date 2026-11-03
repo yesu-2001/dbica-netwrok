@@ -11,6 +11,7 @@ import { AnalyticsView } from './components/AnalyticsView';
 import { AuditTrailView } from './components/AuditTrailView';
 import { CustomizationSettingsView } from './components/CustomizationSettingsView';
 import { NotificationDispatchCenter } from './components/NotificationDispatchCenter';
+import { TimesheetView } from './components/TimesheetView';
 import { ApplyLeaveModal } from './components/ApplyLeaveModal';
 import { ToastContainer } from './components/ToastContainer';
 import { LoginLandingView } from './components/LoginLandingView';
@@ -33,6 +34,8 @@ const MainLayout: React.FC = () => {
         return <OverviewView onApplyLeave={() => handleOpenApplyModal('Casual')} />;
       case 'my-leaves':
         return <MyLeaveView onApplyLeave={handleOpenApplyModal} />;
+      case 'timesheets':
+        return <TimesheetView />;
       case 'requests':
         return <LeaveRequestsView />;
       case 'notifications':
@@ -51,11 +54,11 @@ const MainLayout: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-slate-100 flex flex-col text-slate-900 font-sans selection:bg-blue-100 selection:text-blue-900">
+    <div className="h-dvh overflow-hidden bg-slate-100 flex flex-col text-slate-900 font-sans selection:bg-blue-100 selection:text-blue-900">
       {/* Main Shell Layout */}
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex-1 min-h-0 flex overflow-hidden">
         {/* Desktop Sidebar */}
-        <div className="hidden md:block">
+        <div className="hidden md:block h-full min-h-0 shrink-0">
           <Sidebar />
         </div>
 
@@ -76,7 +79,7 @@ const MainLayout: React.FC = () => {
                   <X className="w-5 h-5" />
                 </button>
               </div>
-              <div onClick={() => setIsMobileMenuOpen(false)}>
+              <div className="flex-1 min-h-0" onClick={() => setIsMobileMenuOpen(false)}>
                 <Sidebar />
               </div>
             </div>
@@ -84,7 +87,7 @@ const MainLayout: React.FC = () => {
         )}
 
         {/* Main Workspace Area */}
-        <div className="flex-1 flex flex-col min-w-0 overflow-y-auto">
+        <div className="flex-1 flex flex-col min-w-0 min-h-0 overflow-y-auto overscroll-contain">
           <Navbar
             onOpenMobileMenu={() => setIsMobileMenuOpen(true)}
             onOpenApplyModal={() => handleOpenApplyModal('Casual')}

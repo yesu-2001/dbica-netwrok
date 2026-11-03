@@ -9,6 +9,7 @@ import {
   query,
   orderBy,
   limit,
+  where,
   onSnapshot,
   Unsubscribe,
 } from 'firebase/firestore';
@@ -20,6 +21,7 @@ import {
   GlobalLeaveThresholds,
   AuditLog,
   DispatchedNotification,
+  TimesheetEntry,
 } from '../types';
 import {
   INITIAL_STAFF_MEMBERS,
@@ -111,7 +113,6 @@ export class FirestoreService {
   async purgeLegacyMockData(): Promise<void> {
     try {
       const mockLeaveIds = ['req-001', 'req-002'];
-      const mockStaffIds = ['dbica-002', 'dbica-003', 'dbica-004'];
       const mockAuditIds = ['audit-001'];
 
       // 1. Delete mock leave requests
@@ -123,13 +124,12 @@ export class FirestoreService {
         }
       }
 
-      // Check and delete any remaining leaves matching mock staff names or IDs
+      // Check and delete any remaining leaves matching legacy mock staff names
       const reqSnap = await getDocs(collection(db, COLLECTIONS.LEAVE_REQUESTS));
       for (const d of reqSnap.docs) {
         const data = d.data();
         if (
           mockLeaveIds.includes(d.id) ||
-          mockStaffIds.includes(data.staffId) ||
           data.staffName === 'David Anthony' ||
           data.staffName === 'Kavitha Raman'
         ) {
@@ -140,15 +140,7 @@ export class FirestoreService {
         }
       }
 
-      // 2. Delete mock staff members from Firestore
-      for (const staffId of mockStaffIds) {
-        try {
-          await deleteDoc(doc(db, COLLECTIONS.STAFF, staffId));
-          console.info(`[Firestore] Purged sample staff member: ${staffId}`);
-        } catch {}
-      }
-
-      // 3. Delete mock audit logs
+      // 2. Delete mock audit logs
       for (const auditId of mockAuditIds) {
         try {
           await deleteDoc(doc(db, COLLECTIONS.AUDIT_LOGS, auditId));
@@ -183,7 +175,6 @@ export class FirestoreService {
       const rawStaffList = staffSnap.docs.map((d) => d.data() as StaffMember);
       const staffList = rawStaffList.filter(
         (s) =>
-          !['dbica-002', 'dbica-003', 'dbica-004'].includes(s.id) &&
           s.name !== 'David Anthony' &&
           s.name !== 'Kavitha Raman'
       );
@@ -205,8 +196,7 @@ export class FirestoreService {
         (r) =>
           !['req-001', 'req-002'].includes(r.id) &&
           r.staffName !== 'David Anthony' &&
-          r.staffName !== 'Kavitha Raman' &&
-          !['dbica-002', 'dbica-003', 'dbica-004'].includes(r.staffId)
+          r.staffName !== 'Kavitha Raman'
       );
 
       // Fetch Audit Logs
@@ -249,7 +239,6 @@ export class FirestoreService {
           .map((d) => d.data() as StaffMember)
           .filter(
             (s) =>
-              !['dbica-002', 'dbica-003', 'dbica-004'].includes(s.id) &&
               s.name !== 'David Anthony' &&
               s.name !== 'Kavitha Raman'
           );
@@ -275,13 +264,38 @@ export class FirestoreService {
             (r) =>
               !['req-001', 'req-002'].includes(r.id) &&
               r.staffName !== 'David Anthony' &&
-              r.staffName !== 'Kavitha Raman' &&
-              !['dbica-002', 'dbica-003', 'dbica-004'].includes(r.staffId)
+              r.staffName !== 'Kavitha Raman'
           );
         onData(requests);
       },
       (err) => {
         console.warn('[Firestore] Leave requests snapshot error:', err);
+        onError?.(err);
+      }
+    );
+  }
+
+  subscribeTimesheetEntries(
+    onData: (entries: TimesheetEntry[]) => void,
+    onError?: (err: any) => void,
+    staffId?: string,
+    staffEmail?: string
+  ): Unsubscribe {
+    const timesheetCollection = collection(db, COLLECTIONS.TIMESHEETS);
+    const entriesQuery = staffId && staffEmail
+      ? query(
+          timesheetCollection,
+          where('staffId', '==', staffId),
+          where('staffEmail', '==', staffEmail)
+        )
+      : timesheetCollection;
+    return onSnapshot(
+      entriesQuery,
+      (snap) => {
+        onData(snap.docs.map((d) => d.data() as TimesheetEntry));
+      },
+      (err) => {
+        console.warn('[Firestore] Timesheet snapshot error:', err);
         onError?.(err);
       }
     );
@@ -392,6 +406,20 @@ export class FirestoreService {
     }
   }
 
+  async findStaffByEmail(email: string): Promise<StaffMember | null> {
+    const staffSnapshot = await getDocs(
+      query(collection(db, COLLECTIONS.STAFF), where('email', '==', email), limit(1))
+    );
+    const staffDoc = staffSnapshot.docs[0];
+    if (staffDoc) return staffDoc.data() as StaffMember;
+
+    const allStaffSnapshot = await getDocs(collection(db, COLLECTIONS.STAFF));
+    const matchingStaff = allStaffSnapshot.docs.find(
+      (staff) => (staff.data().email as string | undefined)?.toLowerCase() === email.toLowerCase()
+    );
+    return matchingStaff ? (matchingStaff.data() as StaffMember) : null;
+  }
+
   async deleteStaff(staffId: string): Promise<boolean> {
     try {
       await deleteDoc(doc(db, COLLECTIONS.STAFF, staffId));
@@ -414,6 +442,34 @@ export class FirestoreService {
     } catch (error) {
       console.error('[Firestore] Error saving leave request:', error);
       return false;
+    }
+  }
+
+  async saveTimesheetEntry(entry: TimesheetEntry): Promise<{ success: boolean; error?: string }> {
+    try {
+      const cleanEntry = sanitizeForFirestore(entry);
+      await setDoc(doc(db, COLLECTIONS.TIMESHEETS, entry.id), cleanEntry);
+      console.info(`[Firestore] Saved timesheet entry for "${entry.staffName}" (${entry.workDate}).`);
+      return { success: true };
+    } catch (error) {
+      console.error('[Firestore] Error saving timesheet entry:', error);
+      const firebaseError = error as { code?: string; message?: string };
+      if (firebaseError.code === 'permission-denied') {
+        return {
+          success: false,
+          error: 'Firestore rejected this timesheet. Confirm the latest Firestore rules are deployed and that this Firebase account is linked to your staff profile.',
+        };
+      }
+      if (firebaseError.code === 'unauthenticated') {
+        return {
+          success: false,
+          error: 'Your Firebase session has expired or is not authenticated. Sign out and sign in again with your staff account.',
+        };
+      }
+      return {
+        success: false,
+        error: firebaseError.message || 'An unexpected Firestore error prevented this task from being saved.',
+      };
     }
   }
 
