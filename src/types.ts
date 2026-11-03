@@ -56,8 +56,8 @@ export interface StaffMember {
   lockoutUntil?: string;
   joinedDate: string;
   avatarBg?: string;
-  reportingTo?: string; // Staff ID of manager/director
   portalPassword?: string; // Encrypted or stored portal authentication password set securely by the employee
+  mustChangePassword?: boolean; // Flag indicating staff should personalize password upon first login
 }
 
 export interface LeaveRequest {

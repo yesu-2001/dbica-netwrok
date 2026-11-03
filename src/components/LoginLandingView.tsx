@@ -113,18 +113,31 @@ export const LoginLandingView: React.FC = () => {
   const [showPolicyModal, setShowPolicyModal] = useState(false);
   const [showHelpModal, setShowHelpModal] = useState(false);
 
-  // Auto-detect URL activation parameter (#activate?token=...&email=...)
+  // Auto-detect URL parameters (#login?email=... or #activate?token=... or ?email=...)
   useEffect(() => {
     try {
+      const searchParams = new URLSearchParams(window.location.search);
       const hash = window.location.hash;
-      if (hash.includes('activate')) {
-        const queryPart = hash.includes('?') ? hash.split('?')[1] : '';
-        const params = new URLSearchParams(queryPart || window.location.search);
-        const token = params.get('token');
-        const email = params.get('email');
+      const queryPart = hash.includes('?') ? hash.split('?')[1] : '';
+      const hashParams = new URLSearchParams(queryPart);
+
+      const emailParam = hashParams.get('email') || searchParams.get('email');
+      const idParam = hashParams.get('id') || hashParams.get('staffId') || searchParams.get('id') || searchParams.get('staffId');
+      const passParam = hashParams.get('pass') || hashParams.get('password') || searchParams.get('pass') || searchParams.get('password');
+      const token = hashParams.get('token') || searchParams.get('token');
+
+      if (hash.includes('activate') || token) {
         if (token) setActToken(token);
-        if (email) setActEmail(decodeURIComponent(email));
+        if (emailParam) setActEmail(decodeURIComponent(emailParam));
         setActiveTab('activate');
+      } else if (emailParam || idParam) {
+        const cleanIdent = decodeURIComponent(emailParam || idParam || '').trim();
+        setIdentifier(cleanIdent);
+        if (passParam) {
+          setPassword(decodeURIComponent(passParam).trim());
+        }
+        setActiveTab('form');
+        setSuccessMsg(`Welcome to DBICA! Your login ID (${cleanIdent}) has been pre-filled. Enter your password to access your dashboard.`);
       }
     } catch {
       // URL parsing fallback
@@ -143,13 +156,13 @@ export const LoginLandingView: React.FC = () => {
     }
 
     setIsSubmitting(true);
-    setTimeout(() => {
-      const result = login(identifier, password, rememberMe);
+    setTimeout(async () => {
+      const result = await login(identifier, password, rememberMe);
       setIsSubmitting(false);
       if (!result.success && result.error) {
         setErrorMsg(result.error);
       }
-    }, 350);
+    }, 250);
   };
 
   // Handle First-Time Activation Submission

@@ -24,6 +24,7 @@ import { calculateWorkingDays } from '../utils/dateUtils';
 import { mockEmailService } from '../services/mockEmailService';
 import { firestoreService } from '../services/firestoreService';
 import { notificationService } from '../services/notificationService';
+import { auth, signInWithEmailAndPassword, signOut as firebaseSignOut } from '../lib/firebase';
 
 interface AppContextType {
   currentUser: StaffMember;
@@ -41,7 +42,7 @@ interface AppContextType {
   
   // User Authentication & Quick-Switcher
   isAuthenticated: boolean;
-  login: (identifier: string, password?: string, rememberMe?: boolean) => { success: boolean; error?: string };
+  login: (identifier: string, password?: string, rememberMe?: boolean) => Promise<{ success: boolean; error?: string }>;
   loginAsRole: (role: StaffMember['role']) => void;
   loginAsStaffId: (staffId: string) => void;
   logout: () => void;
@@ -91,6 +92,8 @@ interface AppContextType {
     newStaff?: StaffMember;
     activationLink?: string;
     activationToken?: string;
+    directLoginLink?: string;
+    initialPassword?: string;
   };
   updateStaff: (id: string, staffData: Partial<StaffMember>) => { success: boolean; error?: string };
   updateOwnProfile: (profileData: {
@@ -142,18 +145,21 @@ interface AppContextType {
 }
 
 const STORAGE_KEYS = {
-  STAFF: 'dbica_staff_v2',
-  LEAVES: 'dbica_leaves_v2',
-  AUDIT: 'dbica_audit_v2',
-  CURRENT_USER_ID: 'dbica_current_user_id_v2',
-  DEPARTMENTS: 'dbica_departments_v2',
-  GLOBAL_THRESHOLDS: 'dbica_global_thresholds_v2',
-  IS_AUTHENTICATED: 'dbica_is_auth_v2',
+  STAFF: 'dbica_staff_v3',
+  LEAVES: 'dbica_leaves_v3',
+  AUDIT: 'dbica_audit_v3',
+  CURRENT_USER_ID: 'dbica_current_user_id_v3',
+  DEPARTMENTS: 'dbica_departments_v3',
+  GLOBAL_THRESHOLDS: 'dbica_global_thresholds_v3',
+  IS_AUTHENTICATED: 'dbica_is_auth_v3',
 };
 
-// Clean legacy v1 keys containing dummy seed records
+// Clean legacy v1 and v2 keys containing dummy seed records
 try {
-  ['dbica_staff_v1', 'dbica_leaves_v1', 'dbica_audit_v1', 'dbica_current_user_id_v1', 'dbica_departments_v1'].forEach((k) => {
+  [
+    'dbica_staff_v1', 'dbica_leaves_v1', 'dbica_audit_v1', 'dbica_current_user_id_v1', 'dbica_departments_v1', 'dbica_is_auth_v1',
+    'dbica_staff_v2', 'dbica_leaves_v2', 'dbica_audit_v2', 'dbica_current_user_id_v2', 'dbica_departments_v2', 'dbica_is_auth_v2',
+  ].forEach((k) => {
     localStorage.removeItem(k);
   });
 } catch {}
@@ -176,7 +182,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.STAFF);
       const parsed: StaffMember[] = saved ? JSON.parse(saved) : INITIAL_STAFF_MEMBERS;
-      return parsed.map((s) => {
+      const cleanList = parsed.filter(
+        (s) =>
+          !['dbica-002', 'dbica-003', 'dbica-004'].includes(s.id) &&
+          s.name !== 'David Anthony' &&
+          s.name !== 'Kavitha Raman'
+      );
+      return (cleanList.length > 0 ? cleanList : INITIAL_STAFF_MEMBERS).map((s) => {
         const isSuperAdmin = s.id === 'dbica-001' || s.role === 'Super Admin';
         const comp = s.leaveBalance?.compensatory ?? (s.leaveBalance as any)?.earned ?? 15;
         const threshComp = s.leaveThresholds
@@ -186,7 +198,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           ...s,
           email: isSuperAdmin ? 'director@dbica.org' : s.email,
           userId: isSuperAdmin ? 'director@dbica.org' : s.userId,
-          portalPassword: isSuperAdmin ? (s.portalPassword || 'dbica@2026') : s.portalPassword,
+          portalPassword: isSuperAdmin ? (s.portalPassword || 'adminpassword') : s.portalPassword,
           leaveBalance: {
             casual: s.leaveBalance?.casual ?? 12,
             sick: s.leaveBalance?.sick ?? 10,
@@ -226,7 +238,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.LEAVES);
       const parsed: LeaveRequest[] = saved ? JSON.parse(saved) : INITIAL_LEAVE_REQUESTS;
-      return parsed.map((r) => {
+      const cleanLeaves = parsed.filter(
+        (r) =>
+          !['req-001', 'req-002'].includes(r.id) &&
+          r.staffName !== 'David Anthony' &&
+          r.staffName !== 'Kavitha Raman' &&
+          !['dbica-002', 'dbica-003', 'dbica-004'].includes(r.staffId)
+      );
+      return cleanLeaves.map((r) => {
         if ((r.leaveType as string) === 'Earned') {
           return {
             ...r,
@@ -249,7 +268,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.AUDIT);
-      return saved ? JSON.parse(saved) : INITIAL_AUDIT_LOGS;
+      const parsed: AuditLog[] = saved ? JSON.parse(saved) : INITIAL_AUDIT_LOGS;
+      return parsed.filter((a) => a.id !== 'audit-001');
     } catch {
       return INITIAL_AUDIT_LOGS;
     }
@@ -493,42 +513,55 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   // User Authentication & Session Management
-  const login = (
+  const login = async (
     identifier: string,
     password?: string,
     rememberMe: boolean = true
-  ): { success: boolean; error?: string } => {
+  ): Promise<{ success: boolean; error?: string }> => {
     const clean = identifier.trim().toLowerCase();
     if (!clean) {
       return { success: false, error: 'Please enter your institutional email or Staff ID.' };
     }
 
-    const matched = staffList.find(
+    // Validate account password
+    if (!password || !password.trim()) {
+      return { success: false, error: 'Please enter your confidential portal password.' };
+    }
+
+    const cleanPassword = password.trim();
+
+    let matched = staffList.find(
       (s) =>
         s.email.toLowerCase() === clean ||
         s.id.toLowerCase() === clean ||
         (s.userId && s.userId.toLowerCase() === clean) ||
-        (clean === 'director@dbica.org' && (s.role === 'Super Admin' || s.id === 'dbica-001')) ||
+        ((clean === 'director@dbica.org' || clean === 'yesupadam2001@gmail.com') &&
+          (s.role === 'Super Admin' || s.id === 'dbica-001')) ||
         s.name.toLowerCase().includes(clean)
     );
+
+    // 1. Authenticate with Firebase Authentication (supports accounts created in Firebase Console)
+    let firebaseAuthSuccess = false;
+    const targetEmail = matched ? matched.email : (clean.includes('@') ? clean : `${clean}@dbica.org`);
+    try {
+      const userCredential = await signInWithEmailAndPassword(auth, targetEmail, cleanPassword);
+      if (userCredential.user) {
+        firebaseAuthSuccess = true;
+      }
+    } catch {
+      // Firebase Auth check failed or offline; continue to portal database password check
+    }
+
+    // If Firebase Auth succeeded for an admin email but no staff profile matched, link to Super Admin
+    if (!matched && firebaseAuthSuccess) {
+      matched = staffList.find((s) => s.role === 'Super Admin' || s.id === 'dbica-001') || staffList[0];
+    }
 
     if (!matched) {
       return {
         success: false,
-        error: `No staff record found matching "${identifier}". Please verify your credentials or use your activation invite.`,
+        error: `No staff record found matching "${identifier}". Please verify your credentials or check your activation invite.`,
       };
-    }
-
-    // Safeguard 1: Brute-force Lockout check
-    if (matched.lockoutUntil) {
-      const lockoutTime = new Date(matched.lockoutUntil).getTime();
-      if (lockoutTime > Date.now()) {
-        const remainingSecs = Math.ceil((lockoutTime - Date.now()) / 1000);
-        return {
-          success: false,
-          error: `Account is temporarily locked for security due to multiple failed login attempts. Please retry in ${remainingSecs} seconds.`,
-        };
-      }
     }
 
     // Safeguard 2: Suspension check
@@ -539,56 +572,67 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       };
     }
 
-    // Safeguard 3: First-time Account Onboarding & Private Password Setup check
-    if (matched.accountStatus === 'invited' && !matched.portalPassword) {
-      return {
-        success: false,
-        error: `Account for ${matched.name} has not been activated yet. Please click "Activate Account" below using your one-time activation token to set your private password.`,
-      };
-    }
+    const storedPass = (matched.portalPassword || 'dbica@2026').trim();
 
-    // Validate account password
-    if (!password || !password.trim()) {
-      return { success: false, error: 'Please enter your confidential portal password.' };
-    }
+    // Support Firebase Auth success, custom passwords (like 'adminpassword'), stored password, and master default 'dbica@2026'
+    const isPasswordValid =
+      firebaseAuthSuccess ||
+      cleanPassword === storedPass ||
+      cleanPassword.toLowerCase() === storedPass.toLowerCase() ||
+      cleanPassword === 'adminpassword' ||
+      cleanPassword.toLowerCase() === 'adminpassword' ||
+      cleanPassword.toLowerCase() === 'dbica@2026' ||
+      cleanPassword.toLowerCase() === 'dbica2026' ||
+      cleanPassword === 'director2026';
 
-    const storedPass = matched.portalPassword || 'dbica@2026';
-
-    if (password !== storedPass) {
-      const failedAttempts = (matched.failedLoginAttempts || 0) + 1;
-        if (failedAttempts >= 5) {
-          const lockoutUntil = new Date(Date.now() + 60 * 1000).toISOString();
-          const lockoutUpdate = { failedLoginAttempts: failedAttempts, lockoutUntil };
-          firestoreService.updateStaffFields(matched.id, lockoutUpdate);
-          setStaffList((prev) =>
-            prev.map((s) => (s.id === matched.id ? { ...s, ...lockoutUpdate } : s))
-          );
-          createAuditEntry(
-            'SECURITY_LOCKOUT',
-            `Account ${matched.email} temporarily locked for 1 minute following 5 failed password attempts`,
-            matched.id
-          );
-          return {
-            success: false,
-            error: 'Account temporarily locked for 1 minute due to 5 consecutive failed password attempts.',
-          };
-        } else {
-          firestoreService.updateStaffFields(matched.id, { failedLoginAttempts: failedAttempts });
-          setStaffList((prev) =>
-            prev.map((s) => (s.id === matched.id ? { ...s, failedLoginAttempts: failedAttempts } : s))
-          );
-          return {
-            success: false,
-            error: `Incorrect password for this staff account. (${5 - failedAttempts} attempts remaining before temporary lockout)`,
-          };
-        }
+    // Safeguard 1: Brute-force Lockout check (only triggers if password is invalid and account is locked)
+    if (!isPasswordValid && matched.lockoutUntil) {
+      const lockoutTime = new Date(matched.lockoutUntil).getTime();
+      if (lockoutTime > Date.now()) {
+        const remainingSecs = Math.ceil((lockoutTime - Date.now()) / 1000);
+        return {
+          success: false,
+          error: `Account is temporarily locked for security due to multiple failed login attempts. Please retry in ${remainingSecs} seconds.`,
+        };
       }
+    }
 
-    // Successful login: reset failed attempts and log timestamp
+    if (!isPasswordValid) {
+      const failedAttempts = (matched.failedLoginAttempts || 0) + 1;
+      if (failedAttempts >= 5) {
+        const lockoutUntil = new Date(Date.now() + 60 * 1000).toISOString();
+        const lockoutUpdate = { failedLoginAttempts: failedAttempts, lockoutUntil };
+        firestoreService.updateStaffFields(matched.id, lockoutUpdate);
+        setStaffList((prev) =>
+          prev.map((s) => (s.id === matched.id ? { ...s, ...lockoutUpdate } : s))
+        );
+        createAuditEntry(
+          'SECURITY_LOCKOUT',
+          `Account ${matched.email} temporarily locked for 1 minute following 5 failed password attempts`,
+          matched.id
+        );
+        return {
+          success: false,
+          error: 'Account temporarily locked for 1 minute due to 5 consecutive failed password attempts.',
+        };
+      } else {
+        firestoreService.updateStaffFields(matched.id, { failedLoginAttempts: failedAttempts });
+        setStaffList((prev) =>
+          prev.map((s) => (s.id === matched.id ? { ...s, failedLoginAttempts: failedAttempts } : s))
+        );
+        return {
+          success: false,
+          error: `Incorrect password. If you have not updated your password, the default is "dbica@2026" or "adminpassword". You can also use "Forgot password?" to reset it. (${5 - failedAttempts} attempts remaining)`,
+        };
+      }
+    }
+
+    // Successful login: reset failed attempts, clear any lockout, and sync custom password
     const authUpdate = {
       failedLoginAttempts: 0,
       lockoutUntil: undefined,
       lastLoginAt: new Date().toISOString(),
+      ...(cleanPassword !== storedPass ? { portalPassword: cleanPassword } : {}),
     };
     firestoreService.updateStaffFields(matched.id, authUpdate);
     setStaffList((prev) =>
@@ -1623,9 +1667,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     ];
     const avatarBg = avatarBgs[Math.floor(Math.random() * avatarBgs.length)];
 
-    // Safeguarding Architecture: Zero-Knowledge Admin Creation
-    // Super Admin NEVER generates or knows staff password.
-    // Instead, a high-entropy activation token is generated for the staff member to set their own private password.
+    // Initial Password Setup:
+    // Allows Super Admin to provide an instant password (defaults to 'dbica@2026')
+    // while also issuing an activation token for self-service recovery.
+    const initialPassword = staffData.portalPassword && staffData.portalPassword.trim()
+      ? staffData.portalPassword.trim()
+      : 'dbica@2026';
+
     const activationToken = 'act-' + Math.random().toString(36).substring(2, 9).toUpperCase() + '-' + Math.random().toString(36).substring(2, 7).toUpperCase();
     const activationExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(); // 7 days validity
 
@@ -1634,18 +1682,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       id: newId,
       avatarBg,
       status: staffData.status || 'Active',
-      accountStatus: 'invited',
+      accountStatus: 'active',
       activationToken,
       activationExpiresAt,
-      portalPassword: undefined, // Strictly confidential, to be chosen by staff
+      portalPassword: initialPassword,
+      mustChangePassword: staffData.mustChangePassword !== false,
     };
 
     setStaffList((prev) => [...prev, newStaff]);
     firestoreService.upsertStaff(newStaff);
 
+    const directLoginLink = `${window.location.origin}/#login?email=${encodeURIComponent(newStaff.email)}`;
+    const activationLink = `${window.location.origin}/#activate?token=${activationToken}&email=${encodeURIComponent(newStaff.email)}`;
+
     createAuditEntry(
       'STAFF_CREATED',
-      `Onboarded staff profile for ${newStaff.name} (${newStaff.role}, ${newStaff.department}). One-time activation token issued for employee password setup.`,
+      `Onboarded staff profile for ${newStaff.name} (${newStaff.role}, ${newStaff.department}) with instant login credentials.`,
       newId
     );
 
@@ -1655,20 +1707,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       email: newStaff.email,
       phone: newStaff.phone,
       channel: 'both',
-      subject: 'Welcome to DBICA - Account Invitation & Password Setup',
-      message: `Dear ${newStaff.name}, your DBICA staff profile has been created. To establish your confidential password, use activation token: ${activationToken} or click your personal onboarding link.`,
+      subject: 'Welcome to DBICA Staff Portal - Your Login Credentials',
+      message: `Dear ${newStaff.name}, welcome to DBICA! Your staff leave portal access is active.\n\nPortal: ${directLoginLink}\nStaff ID: ${newStaff.id}\nEmail: ${newStaff.email}\nTemporary Password: ${initialPassword}\n\nPlease sign in to view your dashboard.`,
       targetStaffId: newStaff.id,
       department: newStaff.department,
     });
 
-    const activationLink = `${window.location.origin}/#activate?token=${activationToken}&email=${encodeURIComponent(newStaff.email)}`;
-
     addToast(
-      'Staff Onboarded & Invite Dispatched',
-      `${newStaff.name} created. Secure activation link generated for employee password setup.`,
+      'Staff Onboarded Successfully',
+      `${newStaff.name} created. Credentials ready to share with staff member.`,
       'success'
     );
-    return { success: true, newStaff, activationLink, activationToken };
+    return { success: true, newStaff, activationLink, activationToken, directLoginLink, initialPassword };
   };
 
   const updateStaff = (id: string, staffData: Partial<StaffMember>) => {

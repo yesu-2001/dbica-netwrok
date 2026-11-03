@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
-import { X, UserCheck, Mail, Building, Phone, Briefcase, AlertCircle, Shield, CheckCircle } from 'lucide-react';
+import { X, UserCheck, Mail, Building, Phone, Briefcase, AlertCircle, Shield, CheckCircle, Lock, Eye, EyeOff } from 'lucide-react';
 import { Department } from '../types';
 
 interface EditProfileModalProps {
@@ -16,6 +16,9 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({ isOpen, onCl
   const [phone, setPhone] = useState(currentUser.phone);
   const [department, setDepartment] = useState<Department>(currentUser.department);
   const [designation, setDesignation] = useState(currentUser.designation);
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPass, setShowPass] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   // Sync with current user when opening
@@ -38,12 +41,24 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({ isOpen, onCl
     e.preventDefault();
     setErrorMsg(null);
 
+    if (newPassword.trim()) {
+      if (newPassword.trim().length < 4) {
+        setErrorMsg('New password must be at least 4 characters long.');
+        return;
+      }
+      if (newPassword !== confirmPassword) {
+        setErrorMsg('New password and confirmation do not match.');
+        return;
+      }
+    }
+
     const result = updateOwnProfile({
       name: name.trim(),
       email: email.trim(),
       phone: phone.trim(),
       department,
       designation: designation.trim(),
+      ...(newPassword.trim() ? { portalPassword: newPassword.trim() } : {}),
     });
 
     if (result.success) {
@@ -194,6 +209,47 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({ isOpen, onCl
                 <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded font-semibold">
                   EL: {currentUser.leaveBalance.earned}d
                 </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Security & Password Personalization */}
+          <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200 space-y-2.5">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                <Lock className="w-3.5 h-3.5 text-blue-600" />
+                <span>Personalize Login Password</span>
+              </span>
+              <span className="text-[10.5px] text-slate-400">Optional</span>
+            </div>
+            <p className="text-[11px] text-slate-500">
+              Leave blank to keep your current password, or enter a new confidential password below:
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              <div className="relative">
+                <input
+                  type={showPass ? 'text' : 'password'}
+                  placeholder="New password (min 4 chars)"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  className="w-full px-3 py-1.5 pr-8 border border-slate-300 rounded-lg text-xs bg-white"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPass(!showPass)}
+                  className="absolute inset-y-0 right-0 pr-2 flex items-center text-slate-400 hover:text-slate-600 cursor-pointer"
+                >
+                  {showPass ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                </button>
+              </div>
+              <div>
+                <input
+                  type={showPass ? 'text' : 'password'}
+                  placeholder="Confirm new password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs bg-white"
+                />
               </div>
             </div>
           </div>
