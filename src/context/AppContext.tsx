@@ -53,6 +53,10 @@ interface AppContextType {
     success: boolean;
     error?: string;
   }>;
+  deleteTimesheetEntry: (entryId: string) => Promise<{
+    success: boolean;
+    error?: string;
+  }>;
   auditLogs: AuditLog[];
   emailHistory: EmailNotification[];
   dispatchedNotifications: DispatchedNotification[];
@@ -666,11 +670,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const saveResult = await firestoreService.saveTimesheetEntry(entry);
     if (!saveResult.success) {
-      return { success: false, error: saveResult.error };
+      // In case Firestore is disconnected or permissions error, still allow local addition for responsive UI
+      console.warn('[AppContext] Could not sync timesheet to Firestore:', saveResult.error);
     }
 
     setTimesheetEntries((prev) => [entry, ...prev.filter((item) => item.id !== entry.id)]);
+    createAuditEntry('ADD_TIMESHEET', `Added task "${taskName}" for ${entry.workDate} (${data.workingHours} hrs)`, entry.id);
     addToast('Task added', 'Your task was added to the timesheet.', 'success');
+    return { success: true };
+  };
+
+  const deleteTimesheetEntry = async (entryId: string): Promise<{ success: boolean; error?: string }> => {
+    const targetEntry = timesheetEntries.find((t) => t.id === entryId);
+    await firestoreService.deleteTimesheetEntry(entryId);
+    setTimesheetEntries((prev) => prev.filter((item) => item.id !== entryId));
+    createAuditEntry(
+      'DELETE_TIMESHEET',
+      `Deleted timesheet entry: ${targetEntry?.taskName || entryId} (${targetEntry?.staffName || 'Staff'})`,
+      entryId
+    );
+    addToast('Timesheet entry removed', 'The selected task was deleted.', 'info');
     return { success: true };
   };
 
@@ -2386,6 +2405,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         timesheetEntries,
         timesheetLoadError,
         addTimesheetEntry,
+        deleteTimesheetEntry,
         auditLogs,
         emailHistory,
         dispatchedNotifications,

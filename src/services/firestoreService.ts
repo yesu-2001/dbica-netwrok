@@ -473,6 +473,20 @@ export class FirestoreService {
     }
   }
 
+  async deleteTimesheetEntry(entryId: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      await deleteDoc(doc(db, COLLECTIONS.TIMESHEETS, entryId));
+      console.info(`[Firestore] Deleted timesheet entry ${entryId}.`);
+      return { success: true };
+    } catch (error) {
+      console.error('[Firestore] Error deleting timesheet entry:', error);
+      return {
+        success: false,
+        error: (error as any)?.message || 'Failed to delete timesheet entry.',
+      };
+    }
+  }
+
   async updateLeaveRequest(requestId: string, updates: Partial<LeaveRequest>): Promise<boolean> {
     try {
       const cleanUpdates = sanitizeForFirestore(updates);

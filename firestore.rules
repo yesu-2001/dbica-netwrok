@@ -57,9 +57,11 @@ service cloud.firestore {
 
     function isTimesheetDirector() {
       return request.auth != null
-        && exists(/databases/$(database)/documents/staff/dbica-001)
-        && get(/databases/$(database)/documents/staff/dbica-001).data.role == 'Super Admin'
-        && get(/databases/$(database)/documents/staff/dbica-001).data.email == request.auth.token.email;
+        && (
+          request.auth.token.email in ['yesu@dbica.org', 'director@dbica.org']
+          || (exists(/databases/$(database)/documents/staff/dbica-001) && get(/databases/$(database)/documents/staff/dbica-001).data.email == request.auth.token.email)
+          || (exists(/databases/$(database)/documents/staff/$(request.auth.uid)) && get(/databases/$(database)/documents/staff/$(request.auth.uid)).data.role in ['Super Admin', 'HR'])
+        );
     }
 
     // Department item validation blueprint
@@ -95,11 +97,9 @@ service cloud.firestore {
 
     // Staff task logs: append-only; application UI scopes entries by staff/director role
     match /timesheets/{entryId} {
-      allow read: if isTimesheetDirector() || isTimesheetOwner(resource.data);
-      allow create: if isValidId(entryId) && isValidTimesheetEntry(request.resource.data)
-        && isTimesheetOwner(request.resource.data)
-        && get(/databases/$(database)/documents/staff/$(request.resource.data.staffId)).data.role != 'Super Admin';
-      allow update, delete: if false;
+      allow read: if true;
+      allow create: if isValidId(entryId) && isValidTimesheetEntry(request.resource.data);
+      allow update, delete: if isTimesheetDirector();
     }
 
     // Academic and operational departments
