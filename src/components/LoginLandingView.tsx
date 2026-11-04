@@ -77,7 +77,6 @@ export const LoginLandingView: React.FC = () => {
           setPassword(decodeURIComponent(passParam).trim());
         }
         setActiveTab('form');
-        setSuccessMsg(`Welcome to DBICA! Your login ID (${cleanIdent}) has been pre-filled. Enter your password to access your dashboard.`);
       }
     } catch {
       // URL parsing fallback

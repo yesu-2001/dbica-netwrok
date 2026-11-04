@@ -41,6 +41,7 @@ interface AppContextType {
   staffList: StaffMember[];
   leaveRequests: LeaveRequest[];
   timesheetEntries: TimesheetEntry[];
+  timesheetLoading: boolean;
   timesheetLoadError: string | null;
   addTimesheetEntry: (entry: {
     workDate: string;
@@ -49,6 +50,17 @@ interface AppContextType {
     status: 'Not Started' | 'In Progress' | 'Completed';
     workingHours: number;
     comments: string;
+  }) => Promise<{
+    success: boolean;
+    error?: string;
+  }>;
+  updateTimesheetEntry: (entryId: string, entry: {
+    workDate: string;
+    taskName: string;
+    workingHours: number;
+    comments: string;
+    priority: 'Low' | 'Medium' | 'High';
+    status: 'Not Started' | 'In Progress' | 'Completed';
   }) => Promise<{
     success: boolean;
     error?: string;
@@ -173,6 +185,8 @@ const STORAGE_KEYS = {
   IS_AUTHENTICATED: 'dbica_is_auth_v3',
 };
 
+const DIRECTOR_ONLY_TABS: ActiveTab[] = ['requests', 'analytics', 'audit'];
+
 // Clean legacy v1 and v2 keys containing dummy seed records
 try {
   [
@@ -275,6 +289,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   });
 
   const [timesheetEntries, setTimesheetEntries] = useState<TimesheetEntry[]>([]);
+  const [timesheetLoading, setTimesheetLoading] = useState(true);
   const [timesheetLoadError, setTimesheetLoadError] = useState<string | null>(null);
 
   // Load audit logs
@@ -314,7 +329,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   });
 
-  const [activeTab, setActiveTab] = useState<ActiveTab>('overview');
+  const [activeTab, setActiveTabState] = useState<ActiveTab>('overview');
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [emailHistory, setEmailHistory] = useState<EmailNotification[]>(() =>
     mockEmailService.getHistory()
@@ -501,23 +516,36 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Find current user object
   const currentUser = staffList.find((s) => s.id === currentUserId) || staffList[0] || INITIAL_STAFF_MEMBERS[0];
+  const isDirector = currentUser.role === 'Super Admin';
+  const setActiveTab = (tab: ActiveTab) => {
+    if (!isDirector && DIRECTOR_ONLY_TABS.includes(tab)) return;
+    setActiveTabState(tab);
+  };
+
+  useEffect(() => {
+    if (!isDirector && DIRECTOR_ONLY_TABS.includes(activeTab)) {
+      setActiveTabState('my-leaves');
+    }
+  }, [isDirector, activeTab]);
 
   useEffect(() => {
     setTimesheetEntries([]);
+    setTimesheetLoading(true);
     setTimesheetLoadError(null);
     const unsubscribe = firestoreService.subscribeTimesheetEntries(
       (entries) => {
         setTimesheetEntries(entries);
+        setTimesheetLoading(false);
         setTimesheetLoadError(null);
         setIsCloudConnected(true);
       },
       (error) => {
         console.warn('[AppContext] Real-time timesheet subscription warning:', error);
-        setTimesheetEntries([]);
-        setTimesheetLoadError('Could not load timesheets. Check your connection or account access.');
+        setTimesheetLoading(false);
+        setTimesheetLoadError('Timesheets could not be loaded. Check your connection or account access, then try again.');
       },
-      currentUser.role === 'Super Admin' ? undefined : currentUser.id,
-      currentUser.role === 'Super Admin' ? undefined : currentUser.email
+      currentUser.role === 'Super Admin' || currentUser.role === 'HR' ? undefined : currentUser.id,
+      currentUser.role === 'Super Admin' || currentUser.role === 'HR' ? undefined : currentUser.email
     );
     return unsubscribe;
   }, [currentUser.id, currentUser.role]);
@@ -609,8 +637,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       comments: string;
     }
   ): Promise<{ success: boolean; error?: string }> => {
-    if (currentUser.role === 'Super Admin') {
-      return { success: false, error: 'The Director can view timesheets but cannot add entries.' };
+    if (currentUser.role !== 'Staff') {
+      return { success: false, error: 'Only staff can add timesheet entries.' };
     }
 
     let firebaseUser = auth.currentUser;
@@ -646,8 +674,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (taskName.length > 200) {
       return { success: false, error: 'Task names must be 200 characters or fewer.' };
     }
-    if (!Number.isFinite(data.workingHours) || data.workingHours < 0 || data.workingHours > 24) {
-      return { success: false, error: 'Working hours must be between 0 and 24.' };
+    if (!Number.isFinite(data.workingHours) || data.workingHours < 0.25 || data.workingHours > 24) {
+      return { success: false, error: 'Working hours must be between 0.25 and 24.' };
     }
     if (comments.length > 2000) {
       return { success: false, error: 'Comments must be 2,000 characters or fewer.' };
@@ -670,19 +698,90 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const saveResult = await firestoreService.saveTimesheetEntry(entry);
     if (!saveResult.success) {
-      // In case Firestore is disconnected or permissions error, still allow local addition for responsive UI
       console.warn('[AppContext] Could not sync timesheet to Firestore:', saveResult.error);
+      return saveResult;
     }
 
-    setTimesheetEntries((prev) => [entry, ...prev.filter((item) => item.id !== entry.id)]);
+    setTimesheetEntries((prev) => [...prev.filter((item) => item.id !== entry.id), entry]);
     createAuditEntry('ADD_TIMESHEET', `Added task "${taskName}" for ${entry.workDate} (${data.workingHours} hrs)`, entry.id);
     addToast('Task added', 'Your task was added to the timesheet.', 'success');
     return { success: true };
   };
 
+  const updateTimesheetEntry = async (
+    entryId: string,
+    data: {
+      workDate: string;
+      taskName: string;
+      workingHours: number;
+      comments: string;
+      priority: 'Low' | 'Medium' | 'High';
+      status: 'Not Started' | 'In Progress' | 'Completed';
+    }
+  ): Promise<{ success: boolean; error?: string }> => {
+    const targetEntry = timesheetEntries.find((entry) => entry.id === entryId);
+    if (currentUser.role !== 'Staff' || !targetEntry || targetEntry.staffId !== currentUser.id) {
+      return { success: false, error: 'You can only update your own timesheet entries.' };
+    }
+
+    const firebaseUser = auth.currentUser;
+    const firebaseIdentityMatches = Boolean(
+      firebaseUser &&
+      ((currentUser.authUid && firebaseUser.uid === currentUser.authUid) ||
+        firebaseUser.email?.toLowerCase() === currentUser.email.toLowerCase())
+    );
+    if (!firebaseIdentityMatches) {
+      return { success: false, error: 'Your signed-in staff profile does not match your Firebase account. Sign in again with your staff account.' };
+    }
+
+    const taskName = data.taskName.trim();
+    const comments = data.comments.trim();
+    const parsedDate = new Date(`${data.workDate}T00:00:00.000Z`);
+    const today = new Date();
+    const todayString = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(data.workDate) || Number.isNaN(parsedDate.getTime()) || parsedDate.toISOString().slice(0, 10) !== data.workDate) {
+      return { success: false, error: 'Choose a valid date for this task.' };
+    }
+    if (data.workDate > todayString) return { success: false, error: 'Tasks cannot be dated in the future.' };
+    if (!taskName || taskName.length > 200) return { success: false, error: 'Task names must be between 1 and 200 characters.' };
+    if (!Number.isFinite(data.workingHours) || data.workingHours < 0.25 || data.workingHours > 24) {
+      return { success: false, error: 'Working hours must be between 0.25 and 24.' };
+    }
+    if (comments.length > 2000) return { success: false, error: 'Notes must be 2,000 characters or fewer.' };
+
+    const updatedEntry: TimesheetEntry = {
+      ...targetEntry,
+      workDate: data.workDate,
+      taskName,
+      workingHours: data.workingHours,
+      comments,
+      priority: data.priority,
+      status: data.status,
+    };
+    const saveResult = await firestoreService.saveTimesheetEntry(updatedEntry);
+    if (!saveResult.success) return saveResult;
+    setTimesheetEntries((prev) => prev.map((entry) => entry.id === entryId ? updatedEntry : entry));
+    createAuditEntry('UPDATE_TIMESHEET', `Updated task "${taskName}" for ${data.workDate}`, entryId);
+    addToast('Task updated', 'Your timesheet changes were saved.', 'success');
+    return { success: true };
+  };
+
   const deleteTimesheetEntry = async (entryId: string): Promise<{ success: boolean; error?: string }> => {
     const targetEntry = timesheetEntries.find((t) => t.id === entryId);
-    await firestoreService.deleteTimesheetEntry(entryId);
+    if (currentUser.role !== 'Staff' || !targetEntry || targetEntry.staffId !== currentUser.id) {
+      return { success: false, error: 'You can only delete your own timesheet entries.' };
+    }
+    const firebaseUser = auth.currentUser;
+    const firebaseIdentityMatches = Boolean(
+      firebaseUser &&
+      ((currentUser.authUid && firebaseUser.uid === currentUser.authUid) ||
+        firebaseUser.email?.toLowerCase() === currentUser.email.toLowerCase())
+    );
+    if (!firebaseIdentityMatches) {
+      return { success: false, error: 'Your signed-in staff profile does not match your Firebase account. Sign in again with your staff account.' };
+    }
+    const deleteResult = await firestoreService.deleteTimesheetEntry(entryId);
+    if (!deleteResult.success) return deleteResult;
     setTimesheetEntries((prev) => prev.filter((item) => item.id !== entryId));
     createAuditEntry(
       'DELETE_TIMESHEET',
@@ -869,7 +968,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       matched.id
     );
 
-    addToast('Welcome to DBICA', `Signed in as ${matched.name} (${matched.role})`, 'success');
     return { success: true };
   };
 
@@ -983,7 +1081,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         matched.id
       );
 
-      addToast('Authenticated', `Active as ${matched.name} • ${matched.role}`, 'success');
     } else {
       addToast(
         'Role Not Configured',
@@ -1009,7 +1106,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         matched.id
       );
 
-      addToast('Signed In', `Welcome back, ${matched.name}`, 'success');
     }
   };
 
@@ -1645,8 +1741,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     if (newStatus === 'Approved') {
       mockEmailService.notifyLeaveApproved(target, `${currentUser.name} (Super Admin Override)`, reason);
+      notificationService.dispatchLeaveApproved(
+        { ...target, ...overrideUpdate },
+        `${currentUser.name} (Super Admin Override)`,
+        staffList.find((staff) => staff.id === target.staffId)?.phone,
+        reason
+      );
     } else if (newStatus === 'Rejected') {
       mockEmailService.notifyLeaveRejected(target, `${currentUser.name} (Super Admin Override)`, reason);
+      notificationService.dispatchLeaveRejected(
+        { ...target, ...overrideUpdate },
+        `${currentUser.name} (Super Admin Override)`,
+        reason,
+        staffList.find((staff) => staff.id === target.staffId)?.phone
+      );
     }
 
     addToast('Override Applied', `Status updated to ${newStatus} in Cloud Firestore.`, 'success');
@@ -2403,8 +2511,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         staffList,
         leaveRequests,
         timesheetEntries,
+        timesheetLoading,
         timesheetLoadError,
         addTimesheetEntry,
+        updateTimesheetEntry,
         deleteTimesheetEntry,
         auditLogs,
         emailHistory,

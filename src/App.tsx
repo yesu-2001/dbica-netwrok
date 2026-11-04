@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { AppProvider, useApp } from './context/AppContext';
-import { LeaveType } from './types';
+import { ActiveTab, LeaveType } from './types';
 import { Sidebar } from './components/Sidebar';
 import { Navbar } from './components/Navbar';
 import { OverviewView } from './components/OverviewView';
@@ -17,19 +17,27 @@ import { ToastContainer } from './components/ToastContainer';
 import { LoginLandingView } from './components/LoginLandingView';
 import { X } from 'lucide-react';
 
+const DIRECTOR_ONLY_TABS: ActiveTab[] = ['requests', 'analytics', 'audit'];
+
 const MainLayout: React.FC = () => {
-  const { activeTab } = useApp();
+  const { activeTab, currentUser } = useApp();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isApplyModalOpen, setIsApplyModalOpen] = useState(false);
   const [applyModalType, setApplyModalType] = useState<LeaveType>('Casual');
 
   const handleOpenApplyModal = (type: LeaveType = 'Casual') => {
+    if (currentUser.role === 'Super Admin') return;
     setApplyModalType(type);
     setIsApplyModalOpen(true);
   };
 
+  const accessibleTab =
+    currentUser.role !== 'Super Admin' && DIRECTOR_ONLY_TABS.includes(activeTab)
+      ? 'my-leaves'
+      : activeTab;
+
   const renderActiveView = () => {
-    switch (activeTab) {
+    switch (accessibleTab) {
       case 'overview':
         return <OverviewView onApplyLeave={() => handleOpenApplyModal('Casual')} />;
       case 'my-leaves':

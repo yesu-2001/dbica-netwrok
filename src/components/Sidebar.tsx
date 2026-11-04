@@ -53,10 +53,11 @@ export const Sidebar: React.FC = () => {
     getVisibleNotifications(dispatchedNotifications, currentUser)
   );
 
-  const canReviewLeaves = currentUser.role !== 'Staff';
+  const isSuperAdmin = currentUser.role === 'Super Admin';
+  const canApplyForLeave = currentUser.role !== 'Super Admin';
   const canManageStaff = currentUser.role === 'Super Admin' || currentUser.role === 'HR';
-  const canViewAnalytics = currentUser.role === 'Super Admin' || currentUser.role === 'HR';
-  const canViewAudit = currentUser.role === 'Super Admin' || currentUser.role === 'HR';
+  const canViewAnalytics = isSuperAdmin;
+  const canViewAudit = isSuperAdmin;
   const canCustomizeSettings = currentUser.role === 'Super Admin';
 
   const navItems: {
@@ -81,7 +82,7 @@ export const Sidebar: React.FC = () => {
       icon: <PlaneTakeoff className="w-4 h-4" />,
       badge: myPendingCount > 0 ? myPendingCount : undefined,
       badgeColor: 'bg-blue-500/20 text-blue-300 border-blue-500/30',
-      visible: true,
+      visible: canApplyForLeave,
       description: 'Balances & personal applications',
     },
     {
@@ -97,9 +98,10 @@ export const Sidebar: React.FC = () => {
       icon: <FileCheck2 className="w-4 h-4" />,
       badge: relevantPendingCount > 0 ? relevantPendingCount : undefined,
       badgeColor: 'bg-amber-500/20 text-amber-300 border-amber-500/30 font-bold',
-      visible: canReviewLeaves,
+      visible: isSuperAdmin,
       description: currentUser.role === 'Manager' ? `${currentUser.department} approvals` : 'Organization approvals',
     },
+    /*
     {
       id: 'notifications',
       label:
@@ -119,6 +121,7 @@ export const Sidebar: React.FC = () => {
           ? `${currentUser.department} alerts & receipts`
           : 'Live delivery logs & direct messaging',
     },
+    */
     {
       id: 'staff',
       label: 'Staff Directory (CRUD)',

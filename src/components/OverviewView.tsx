@@ -26,10 +26,11 @@ export const OverviewView: React.FC<{ onApplyLeave: () => void }> = ({ onApplyLe
   const [selectedCalendarDay, setSelectedCalendarDay] = useState<string>(() => getTodayDateString());
   const [departmentFilter, setDepartmentFilter] = useState<string>('All');
 
-  const isStaff = currentUser.role === 'Staff';
+  const isPersonalView = currentUser.role === 'Staff' || currentUser.role === 'HR';
+  const isSuperAdmin = currentUser.role === 'Super Admin';
   const isManager = currentUser.role === 'Manager';
   const scopedLeaveRequests = leaveRequests.filter((request) => {
-    if (isStaff) return request.staffId === currentUser.id;
+    if (isPersonalView) return request.staffId === currentUser.id;
     if (isManager) return request.department === currentUser.department;
     return true;
   });
@@ -72,7 +73,7 @@ export const OverviewView: React.FC<{ onApplyLeave: () => void }> = ({ onApplyLe
       status: string;
     }[] = [];
 
-    if (isStaff) return [];
+    if (isPersonalView) return [];
 
     const activeLeaves = scopedLeaveRequests.filter(
       (r) =>
@@ -100,7 +101,7 @@ export const OverviewView: React.FC<{ onApplyLeave: () => void }> = ({ onApplyLe
       }
     }
     return clashes;
-  }, [scopedLeaveRequests, isStaff, todayStr]);
+  }, [scopedLeaveRequests, isPersonalView, todayStr]);
 
   // Calendar days generation
   const year = currentMonthDate.getFullYear();
@@ -177,7 +178,7 @@ export const OverviewView: React.FC<{ onApplyLeave: () => void }> = ({ onApplyLe
     (currentUser.leaveBalance.compensatory ?? currentUser.leaveBalance.earned ?? 0);
   const staffOnLeaveToday = new Set(onLeaveToday.map((request) => request.staffId)).size;
   const totalUpcomingLeaveDays = upcomingLeaves.reduce((sum, request) => sum + request.totalDays, 0);
-  const metrics = isStaff
+  const metrics = isPersonalView
     ? [
         {
           label: 'My Pending Requests',
@@ -261,17 +262,19 @@ export const OverviewView: React.FC<{ onApplyLeave: () => void }> = ({ onApplyLe
               </div>
               <span className="text-[11px] text-slate-400 mt-0.5 block">
                 {index === 0 && pendingRequests.length > 0 ? (
-                  isStaff ? (
+                  isPersonalView ? (
                     'Awaiting manager review'
-                  ) : (
+                  ) : isSuperAdmin ? (
                     <button
                       onClick={() => setActiveTab('requests')}
                       className="text-blue-600 hover:underline font-medium"
                     >
                       Review requests →
                     </button>
+                  ) : (
+                    metric.description
                   )
-                ) : index === 0 && isStaff ? (
+                ) : index === 0 && isPersonalView ? (
                   <button
                     onClick={onApplyLeave}
                     className="text-blue-600 hover:underline font-medium"
@@ -344,7 +347,7 @@ export const OverviewView: React.FC<{ onApplyLeave: () => void }> = ({ onApplyLe
             <div className="flex items-center gap-3">
               <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
                 <CalendarIcon className="w-5 h-5 text-blue-600" />
-                <span>{isStaff ? 'My Leave Calendar' : isManager ? 'Department Leave Calendar' : 'Institution Leave Calendar'}</span>
+                <span>{isPersonalView ? 'My Leave Calendar' : isManager ? 'Department Leave Calendar' : 'Institution Leave Calendar'}</span>
                 <span className="text-xs font-medium text-slate-500">{monthLabel}</span>
               </h2>
               <div className="flex items-center rounded-lg border border-slate-200 p-0.5 bg-slate-50 gap-0.5">
@@ -374,7 +377,7 @@ export const OverviewView: React.FC<{ onApplyLeave: () => void }> = ({ onApplyLe
               </div>
             </div>
 
-            {!isStaff && !isManager && (
+            {isSuperAdmin && (
               <div className="flex items-center gap-2">
                 <span className="text-xs text-slate-500 font-medium">Department:</span>
                 <select
@@ -499,7 +502,7 @@ export const OverviewView: React.FC<{ onApplyLeave: () => void }> = ({ onApplyLe
               </div>
             </div>
             <span>
-              {isStaff
+              {isPersonalView
                 ? 'Select a day to view your leave requests'
                 : isManager
                 ? `Select a day to view ${currentUser.department} coverage`
@@ -531,10 +534,10 @@ export const OverviewView: React.FC<{ onApplyLeave: () => void }> = ({ onApplyLe
                 <div className="text-center py-8 text-slate-400">
                   <CheckCircle className="w-8 h-8 mx-auto text-emerald-400/80 mb-2" />
                   <p className="text-xs font-medium text-slate-600">
-                    {isStaff ? 'No Leave Requests' : 'Full Staff Availability'}
+                    {isPersonalView ? 'No Leave Requests' : 'Full Staff Availability'}
                   </p>
                   <p className="text-[11px] text-slate-400 mt-0.5">
-                    {isStaff
+                    {isPersonalView
                       ? 'You have no approved or pending leave on this date.'
                       : 'No approved or pending leaves on this date.'}
                   </p>
@@ -591,7 +594,7 @@ export const OverviewView: React.FC<{ onApplyLeave: () => void }> = ({ onApplyLe
           <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
-                {isStaff ? 'My Upcoming Leaves' : isManager ? 'Upcoming Department Leaves' : 'Upcoming Staff Leaves'}
+                {isPersonalView ? 'My Upcoming Leaves' : isManager ? 'Upcoming Department Leaves' : 'Upcoming Staff Leaves'}
               </h3>
               <span className="text-[11px] text-slate-400">Next 14 days</span>
             </div>
@@ -603,10 +606,10 @@ export const OverviewView: React.FC<{ onApplyLeave: () => void }> = ({ onApplyLe
                     <CheckCircle className="w-4 h-4" />
                   </div>
                   <p className="font-semibold text-slate-700">
-                    {isStaff ? 'No Upcoming Leave' : 'No Upcoming Staff Leaves'}
+                    {isPersonalView ? 'No Upcoming Leave' : 'No Upcoming Staff Leaves'}
                   </p>
                   <p className="text-[11px] text-slate-400 max-w-xs mx-auto">
-                    {isStaff
+                    {isPersonalView
                       ? 'Your approved leave in the next 14 days will appear here.'
                       : 'Approved leave in the next 14 days will appear here.'}
                   </p>

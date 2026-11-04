@@ -55,15 +55,6 @@ service cloud.firestore {
         );
     }
 
-    function isTimesheetDirector() {
-      return request.auth != null
-        && (
-          request.auth.token.email in ['yesu@dbica.org', 'director@dbica.org']
-          || (exists(/databases/$(database)/documents/staff/dbica-001) && get(/databases/$(database)/documents/staff/dbica-001).data.email == request.auth.token.email)
-          || (exists(/databases/$(database)/documents/staff/$(request.auth.uid)) && get(/databases/$(database)/documents/staff/$(request.auth.uid)).data.role in ['Super Admin', 'HR'])
-        );
-    }
-
     // Department item validation blueprint
     function isValidDepartment(data) {
       return data.name is string && data.name.size() > 0 && data.name.size() <= 100
@@ -95,11 +86,18 @@ service cloud.firestore {
       allow delete: if isValidId(requestId);
     }
 
-    // Staff task logs: append-only; application UI scopes entries by staff/director role
+    // Staff can manage only their own task logs; directors have read-only access.
     match /timesheets/{entryId} {
       allow read: if true;
-      allow create: if isValidId(entryId) && isValidTimesheetEntry(request.resource.data);
-      allow update, delete: if isTimesheetDirector();
+      allow create: if isValidId(entryId) && isValidTimesheetEntry(request.resource.data) && isTimesheetOwner(request.resource.data);
+      allow update: if isValidTimesheetEntry(request.resource.data)
+        && isTimesheetOwner(resource.data)
+        && request.resource.data.staffId == resource.data.staffId
+        && request.resource.data.staffEmail == resource.data.staffEmail
+        && request.resource.data.staffName == resource.data.staffName
+        && request.resource.data.department == resource.data.department
+        && request.resource.data.createdAt == resource.data.createdAt;
+      allow delete: if isTimesheetOwner(resource.data);
     }
 
     // Academic and operational departments

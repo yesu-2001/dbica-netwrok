@@ -51,39 +51,27 @@ export function getVisibleNotifications(
   staff: StaffMember
 ): DispatchedNotification[] {
   return notifications.filter((notification) => {
-    if (staff.role === 'Staff') {
-      return isDecisionForStaff(notification, staff);
-    }
-
     if (notification.type === 'LEAVE_SUBMITTED') {
       const isReviewerNotice =
         notification.metadata?.audience === 'reviewers' ||
         (!notification.metadata?.audience &&
           !isApplicantSubmissionConfirmation(notification));
-
-      if (!isReviewerNotice) return false;
-      return (
-        staff.role === 'Super Admin' ||
-        staff.role === 'HR' ||
-        notification.metadata?.department === staff.department
-      );
+      return staff.role === 'Super Admin' && isReviewerNotice;
     }
 
     if (DECISION_TYPES.has(notification.type)) {
-      return (
-        staff.role === 'Super Admin' ||
-        staff.role === 'HR' ||
-        notification.metadata?.department === staff.department ||
-        isDecisionForStaff(notification, staff)
-      );
+      if (isDecisionForStaff(notification, staff)) return true;
+      if (notification.type !== 'LEAVE_APPROVED') return false;
+      if (staff.role === 'HR') return notification.metadata?.staffId !== staff.id;
+      if (staff.role === 'Manager') {
+        return notification.metadata?.staffId !== staff.id &&
+          notification.metadata?.department === staff.department;
+      }
+      return false;
     }
 
     if (notification.type === 'CUSTOM') {
-      return (
-        staff.role === 'Super Admin' ||
-        staff.role === 'HR' ||
-        isDirectlyAddressedTo(notification, staff)
-      );
+      return isDirectlyAddressedTo(notification, staff);
     }
 
     return false;
