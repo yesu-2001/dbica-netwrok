@@ -93,19 +93,21 @@ export const MyLeaveView: React.FC<{ onApplyLeave: (type?: LeaveType) => void }>
   ];
 
   // Filtered requests
-  const filteredRequests = myRequests.filter((req) => {
-    if (statusFilter !== 'All' && req.status !== statusFilter) return false;
-    if (searchTerm) {
-      const q = searchTerm.toLowerCase();
-      return (
-        req.leaveType.toLowerCase().includes(q) ||
-        req.reason.toLowerCase().includes(q) ||
-        req.startDate.includes(q) ||
-        req.endDate.includes(q)
-      );
-    }
-    return true;
-  });
+  const filteredRequests = myRequests
+    .filter((req) => {
+      if (statusFilter !== 'All' && req.status !== statusFilter) return false;
+      if (searchTerm) {
+        const q = searchTerm.toLowerCase();
+        return (
+          req.leaveType.toLowerCase().includes(q) ||
+          req.reason.toLowerCase().includes(q) ||
+          req.startDate.includes(q) ||
+          req.endDate.includes(q)
+        );
+      }
+      return true;
+    })
+    .sort((a, b) => Date.parse(b.appliedAt) - Date.parse(a.appliedAt));
 
   const handleCancelClick = (requestId: string) => {
     cancelLeave(requestId);
