@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import {
   Calendar,
@@ -26,11 +26,13 @@ import { EditProfileModal } from './EditProfileModal';
 export const MyLeaveView: React.FC<{ onApplyLeave: (type?: LeaveType) => void }> = ({
   onApplyLeave,
 }) => {
-  const { currentUser, leaveRequests, cancelLeave, getMonthlyPermissionUsage } = useApp();
+  const { currentUser, leaveRequests, cancelLeave, getMonthlyPermissionUsage, addToast } = useApp();
 
   const [statusFilter, setStatusFilter] = useState<string>('All');
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [cancellingId, setCancellingId] = useState<string | null>(null);
+  const [isCancelling, setIsCancelling] = useState(false);
+  const cancellationInProgress = useRef(false);
   const [isEditProfileOpen, setIsEditProfileOpen] = useState(false);
 
   // Filter requests for logged-in user
@@ -109,9 +111,24 @@ export const MyLeaveView: React.FC<{ onApplyLeave: (type?: LeaveType) => void }>
     })
     .sort((a, b) => Date.parse(b.appliedAt) - Date.parse(a.appliedAt));
 
-  const handleCancelClick = (requestId: string) => {
-    cancelLeave(requestId);
-    setCancellingId(null);
+  const handleCancelClick = async (requestId: string) => {
+    if (cancellationInProgress.current) return;
+    cancellationInProgress.current = true;
+    setIsCancelling(true);
+    try {
+      const result = await cancelLeave(requestId);
+      if (result.success) {
+        setCancellingId(null);
+      } else {
+        addToast('Cancellation Failed', result.error || 'Unable to cancel this leave request.', 'error');
+      }
+    } catch (error) {
+      console.error('[MyLeaveView] Leave cancellation failed:', error);
+      addToast('Cancellation Failed', error instanceof Error ? error.message : 'Unable to cancel this leave request.', 'error');
+    } finally {
+      cancellationInProgress.current = false;
+      setIsCancelling(false);
+    }
   };
 
   return (
@@ -507,14 +524,18 @@ export const MyLeaveView: React.FC<{ onApplyLeave: (type?: LeaveType) => void }>
                           cancellingId === req.id ? (
                             <div className="flex items-center justify-end gap-1.5">
                               <button
+                                type="button"
+                                disabled={isCancelling}
                                 onClick={() => handleCancelClick(req.id)}
-                                className="px-2 py-1 bg-rose-600 text-white rounded text-[10.5px] font-semibold hover:bg-rose-700"
+                                className="px-2 py-1 bg-rose-600 text-white rounded text-[10.5px] font-semibold hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
                               >
-                                Confirm
+                                {isCancelling ? 'Cancelling...' : 'Confirm'}
                               </button>
                               <button
+                                type="button"
+                                disabled={isCancelling}
                                 onClick={() => setCancellingId(null)}
-                                className="px-2 py-1 bg-slate-200 text-slate-700 rounded text-[10.5px]"
+                                className="px-2 py-1 bg-slate-200 text-slate-700 rounded text-[10.5px] disabled:cursor-not-allowed disabled:opacity-60"
                               >
                                 No
                               </button>

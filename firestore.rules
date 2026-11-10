@@ -25,7 +25,10 @@ service cloud.firestore {
         && data.startDate is string && data.startDate.size() >= 8 && data.startDate.size() <= 20
         && data.endDate is string && data.endDate.size() >= 8 && data.endDate.size() <= 20
         && data.totalDays is number && data.totalDays >= 0 && data.totalDays <= 365
-        && data.status is string && data.status in ['Pending', 'Approved', 'Rejected', 'Cancelled'];
+        && data.status is string && data.status in ['Pending', 'Approved', 'Rejected', 'Cancelled']
+        && (!('actionedBy' in data) || (data.actionedBy is string && data.actionedBy.size() <= 150))
+        && (!('actionedAt' in data) || (data.actionedAt is string && data.actionedAt.size() <= 40))
+        && (!('rejectionReason' in data) || (data.rejectionReason is string && data.rejectionReason.size() <= 2000));
     }
 
     function isValidTimesheetEntry(data) {
@@ -43,6 +46,21 @@ service cloud.firestore {
     }
 
     function isTimesheetOwner(data) {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/staff/$(data.staffId))
+        && (
+          (
+            'authUid' in get(/databases/$(database)/documents/staff/$(data.staffId)).data
+            && get(/databases/$(database)/documents/staff/$(data.staffId)).data.authUid == request.auth.uid
+          )
+          || (
+            get(/databases/$(database)/documents/staff/$(data.staffId)).data.email == data.staffEmail
+            && get(/databases/$(database)/documents/staff/$(data.staffId)).data.email == request.auth.token.email
+          )
+        );
+    }
+
+    function isLeaveOwner(data) {
       return request.auth != null
         && exists(/databases/$(database)/documents/staff/$(data.staffId))
         && get(/databases/$(database)/documents/staff/$(data.staffId)).data.email == data.staffEmail
@@ -80,10 +98,23 @@ service cloud.firestore {
 
     // Leave applications & status authorizations
     match /leaveRequests/{requestId} {
-      allow read: if true;
-      allow create: if isValidId(requestId) && isValidLeaveRequest(request.resource.data);
-      allow update: if isValidId(requestId) && isValidLeaveRequest(request.resource.data);
-      allow delete: if isValidId(requestId);
+      allow read: if request.auth != null;
+      allow create: if isValidId(requestId)
+        && isValidLeaveRequest(request.resource.data)
+        && isLeaveOwner(request.resource.data);
+      allow update: if request.auth != null
+        && isValidId(requestId)
+        && isValidLeaveRequest(request.resource.data)
+        && request.resource.data.staffId == resource.data.staffId
+        && request.resource.data.staffEmail == resource.data.staffEmail
+        && request.resource.data.department == resource.data.department
+        && request.resource.data.leaveType == resource.data.leaveType
+        && request.resource.data.startDate == resource.data.startDate
+        && request.resource.data.endDate == resource.data.endDate
+        && request.resource.data.totalDays == resource.data.totalDays
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['status', 'actionedBy', 'actionedAt', 'rejectionReason']);
+      allow delete: if false;
     }
 
     // Staff can manage only their own task logs; directors have read-only access.

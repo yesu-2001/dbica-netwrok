@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { DepartmentItem, StaffMember } from '../types';
 import {
@@ -56,6 +56,8 @@ export const CustomizationSettingsView: React.FC = () => {
   const [globalCompMax, setGlobalCompMax] = useState(globalThresholds.compensatoryMax ?? 5);
   const [syncAllStaff, setSyncAllStaff] = useState(false);
   const [isSavingGlobal, setIsSavingGlobal] = useState(false);
+  const [isSavingStaffThreshold, setIsSavingStaffThreshold] = useState(false);
+  const staffThresholdSaveInProgress = useRef(false);
 
   // Staff Threshold Editor Modal State
   const [selectedStaff, setSelectedStaff] = useState<StaffMember | null>(null);
@@ -179,6 +181,9 @@ export const CustomizationSettingsView: React.FC = () => {
       } else {
         setSyncAllStaff(false);
       }
+    } catch (error) {
+      console.error('[CustomizationSettingsView] Failed to save global thresholds:', error);
+      addToast('Error', error instanceof Error ? error.message : 'Failed to save global thresholds.', 'error');
     } finally {
       setIsSavingGlobal(false);
     }
@@ -219,27 +224,38 @@ export const CustomizationSettingsView: React.FC = () => {
   // Save Staff Threshold
   const handleSaveStaffThreshold = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedStaff) return;
+    if (!selectedStaff || staffThresholdSaveInProgress.current) return;
+    staffThresholdSaveInProgress.current = true;
+    setIsSavingStaffThreshold(true);
+    try {
+      const res = await updateStaffLeaveThresholds(
+        selectedStaff.id,
+        {
+          casual: Number(staffThresholdCasual),
+          sick: Number(staffThresholdSick),
+          earned: Number(staffThresholdEarned),
+          compensatory: Number(staffThresholdEarned),
+        },
+        {
+          casual: Number(staffBalanceCasual),
+          sick: Number(staffBalanceSick),
+          earned: Number(staffBalanceEarned),
+          compensatory: Number(staffBalanceEarned),
+        },
+        thresholdReason.trim()
+      );
 
-    const res = await updateStaffLeaveThresholds(
-      selectedStaff.id,
-      {
-        casual: Number(staffThresholdCasual),
-        sick: Number(staffThresholdSick),
-        earned: Number(staffThresholdEarned),
-        compensatory: Number(staffThresholdEarned),
-      },
-      {
-        casual: Number(staffBalanceCasual),
-        sick: Number(staffBalanceSick),
-        earned: Number(staffBalanceEarned),
-        compensatory: Number(staffBalanceEarned),
-      },
-      thresholdReason.trim()
-    );
-
-    if (res.success) {
-      setSelectedStaff(null);
+      if (res.success) {
+        setSelectedStaff(null);
+      } else {
+        addToast('Unable to Save Changes', res.error || 'Failed to update staff leave quotas and balances.', 'error');
+      }
+    } catch (error) {
+      console.error('[CustomizationSettingsView] Failed to save staff threshold:', error);
+      addToast('Unable to Save Changes', error instanceof Error ? error.message : 'Failed to update staff leave quotas and balances.', 'error');
+    } finally {
+      staffThresholdSaveInProgress.current = false;
+      setIsSavingStaffThreshold(false);
     }
   };
 
@@ -990,8 +1006,10 @@ export const CustomizationSettingsView: React.FC = () => {
                 </div>
               </div>
               <button
+                type="button"
+                disabled={isSavingStaffThreshold}
                 onClick={() => setSelectedStaff(null)}
-                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100"
+                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -1142,16 +1160,18 @@ export const CustomizationSettingsView: React.FC = () => {
               <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
                 <button
                   type="button"
+                  disabled={isSavingStaffThreshold}
                   onClick={() => setSelectedStaff(null)}
-                  className="px-4 py-2 font-medium text-slate-600 hover:bg-slate-100 rounded-xl"
+                  className="px-4 py-2 font-medium text-slate-600 hover:bg-slate-100 rounded-xl disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 font-semibold text-white bg-purple-600 hover:bg-purple-700 rounded-xl shadow-sm shadow-purple-600/30"
+                  disabled={isSavingStaffThreshold}
+                  className="px-4 py-2 font-semibold text-white bg-purple-600 hover:bg-purple-700 rounded-xl shadow-sm shadow-purple-600/30 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  Save Quota & Balances
+                  {isSavingStaffThreshold ? 'Saving...' : 'Save Quota & Balances'}
                 </button>
               </div>
             </form>

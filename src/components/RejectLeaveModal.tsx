@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { X, AlertTriangle, MessageSquare } from 'lucide-react';
 import { LeaveRequest } from '../types';
@@ -14,23 +14,36 @@ export const RejectLeaveModal: React.FC<RejectLeaveModalProps> = ({ request, isO
   const { rejectLeave } = useApp();
   const [reason, setReason] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const submissionInProgress = useRef(false);
 
   if (!isOpen || !request) return null;
 
-  const handleReject = (e: React.FormEvent) => {
+  const handleReject = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submissionInProgress.current) return;
     if (!reason.trim()) {
       setError('A rejection reason is mandatory to guide the staff member.');
       return;
     }
 
-    const result = rejectLeave(request.id, reason.trim());
-    if (result.success) {
-      setReason('');
-      setError(null);
-      onClose();
-    } else {
-      setError(result.error || 'Failed to reject leave.');
+    submissionInProgress.current = true;
+    setIsSubmitting(true);
+    try {
+      const result = await rejectLeave(request.id, reason.trim());
+      if (result.success) {
+        setReason('');
+        setError(null);
+        onClose();
+      } else {
+        setError(result.error || 'Failed to reject leave.');
+      }
+    } catch (error) {
+      console.error('[RejectLeaveModal] Rejection failed:', error);
+      setError(error instanceof Error ? error.message : 'Failed to reject leave.');
+    } finally {
+      submissionInProgress.current = false;
+      setIsSubmitting(false);
     }
   };
 
@@ -44,6 +57,7 @@ export const RejectLeaveModal: React.FC<RejectLeaveModalProps> = ({ request, isO
           </div>
           <button
             onClick={onClose}
+            disabled={isSubmitting}
             className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100"
           >
             <X className="w-5 h-5" />
@@ -96,15 +110,17 @@ export const RejectLeaveModal: React.FC<RejectLeaveModalProps> = ({ request, isO
             <button
               type="button"
               onClick={onClose}
+              disabled={isSubmitting}
               className="px-4 py-2 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded-xl"
             >
               Cancel
             </button>
             <button
               type="submit"
+              disabled={isSubmitting}
               className="px-4 py-2 text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 rounded-xl shadow-sm shadow-rose-600/30"
             >
-              Confirm Rejection
+              {isSubmitting ? 'Submitting...' : 'Confirm Rejection'}
             </button>
           </div>
         </form>

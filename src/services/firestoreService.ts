@@ -11,12 +11,14 @@ import {
   limit,
   where,
   onSnapshot,
+  runTransaction,
   Unsubscribe,
 } from 'firebase/firestore';
 import { db, COLLECTIONS } from '../lib/firebase';
 import {
   StaffMember,
   LeaveRequest,
+  LeaveBalance,
   DepartmentItem,
   GlobalLeaveThresholds,
   AuditLog,
@@ -480,9 +482,22 @@ export class FirestoreService {
       return { success: true };
     } catch (error) {
       console.error('[Firestore] Error deleting timesheet entry:', error);
+      const firebaseError = error as { code?: string; message?: string };
+      if (firebaseError.code === 'permission-denied') {
+        return {
+          success: false,
+          error: 'Firestore blocked this deletion. Confirm the latest Firestore rules are deployed and that this entry belongs to your signed-in staff account.',
+        };
+      }
+      if (firebaseError.code === 'unauthenticated') {
+        return {
+          success: false,
+          error: 'Your Firebase session has expired or is not authenticated. Sign out and sign in again with your staff account.',
+        };
+      }
       return {
         success: false,
-        error: (error as any)?.message || 'Failed to delete timesheet entry.',
+        error: firebaseError.message || 'Failed to delete timesheet entry.',
       };
     }
   }
@@ -495,6 +510,46 @@ export class FirestoreService {
       return true;
     } catch (error) {
       console.error('[Firestore] Error updating leave request:', error);
+      return false;
+    }
+  }
+
+  async updateLeaveRequestAndBalance(
+    requestId: string,
+    updates: Partial<LeaveRequest>,
+    expectedStatus: LeaveRequest['status'],
+    staffId?: string,
+    leaveBalance?: LeaveBalance
+  ): Promise<boolean> {
+    try {
+      const requestRef = doc(db, COLLECTIONS.LEAVE_REQUESTS, requestId);
+      await runTransaction(db, async (transaction) => {
+        const requestSnapshot = await transaction.get(requestRef);
+        if (!requestSnapshot.exists()) {
+          throw new Error('Leave request not found.');
+        }
+        if (requestSnapshot.data().status !== expectedStatus) {
+          throw new Error('Leave request status changed. Refresh and try again.');
+        }
+
+        const staffRef = staffId && leaveBalance
+          ? doc(db, COLLECTIONS.STAFF, staffId)
+          : undefined;
+        if (staffRef) {
+          const staffSnapshot = await transaction.get(staffRef);
+          if (!staffSnapshot.exists()) {
+            throw new Error('Staff profile for the leave request was not found.');
+          }
+        }
+
+        transaction.update(requestRef, sanitizeForFirestore(updates));
+        if (staffRef && leaveBalance) {
+          transaction.update(staffRef, {leaveBalance: sanitizeForFirestore(leaveBalance)});
+        }
+      });
+      return true;
+    } catch (error) {
+      console.error('[Firestore] Could not update leave request and balance:', error);
       return false;
     }
   }

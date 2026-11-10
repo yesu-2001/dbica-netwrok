@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import {
   FileCheck2,
@@ -20,7 +20,7 @@ import { RejectLeaveModal } from './RejectLeaveModal';
 import { OverrideLeaveModal } from './OverrideLeaveModal';
 
 export const LeaveRequestsView: React.FC = () => {
-  const { currentUser, leaveRequests, approveLeave, departments: appDepartments } = useApp();
+  const { currentUser, leaveRequests, approveLeave, departments: appDepartments, addToast } = useApp();
 
   const [statusFilter, setStatusFilter] = useState<string>('Pending');
   const [departmentFilter, setDepartmentFilter] = useState<string>(
@@ -31,6 +31,8 @@ export const LeaveRequestsView: React.FC = () => {
   const [overridingRequest, setOverridingRequest] = useState<LeaveRequest | null>(null);
   const [approvingId, setApprovingId] = useState<string | null>(null);
   const [approvalNote, setApprovalNote] = useState('');
+  const [isApproving, setIsApproving] = useState(false);
+  const approvalInProgress = useRef(false);
 
   // RBAC check: Only Super Admin, HR, and Manager can review
   if (currentUser.role === 'Staff') {
@@ -69,10 +71,25 @@ export const LeaveRequestsView: React.FC = () => {
     return true;
   });
 
-  const handleApprove = (requestId: string) => {
-    approveLeave(requestId, approvalNote.trim() || undefined);
-    setApprovingId(null);
-    setApprovalNote('');
+  const handleApprove = async (requestId: string) => {
+    if (approvalInProgress.current) return;
+    approvalInProgress.current = true;
+    setIsApproving(true);
+    try {
+      const result = await approveLeave(requestId, approvalNote.trim() || undefined);
+      if (result.success) {
+        setApprovingId(null);
+        setApprovalNote('');
+      } else {
+        addToast('Approval Failed', result.error || 'Unable to approve this leave request.', 'error');
+      }
+    } catch (error) {
+      console.error('[LeaveRequestsView] Leave approval failed:', error);
+      addToast('Approval Failed', error instanceof Error ? error.message : 'Unable to approve this leave request.', 'error');
+    } finally {
+      approvalInProgress.current = false;
+      setIsApproving(false);
+    }
   };
 
   const departments: string[] = appDepartments.map((d) => d.name);
@@ -335,17 +352,21 @@ export const LeaveRequestsView: React.FC = () => {
                               />
                               <div className="flex items-center gap-1">
                                 <button
+                                  type="button"
+                                  disabled={isApproving}
                                   onClick={() => handleApprove(req.id)}
-                                  className="px-2 py-0.5 bg-emerald-600 text-white rounded text-[10.5px] font-semibold hover:bg-emerald-700"
+                                  className="px-2 py-0.5 bg-emerald-600 text-white rounded text-[10.5px] font-semibold hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
                                 >
-                                  Confirm
+                                  {isApproving ? 'Approving...' : 'Confirm'}
                                 </button>
                                 <button
+                                  type="button"
+                                  disabled={isApproving}
                                   onClick={() => {
                                     setApprovingId(null);
                                     setApprovalNote('');
                                   }}
-                                  className="px-2 py-0.5 bg-slate-200 text-slate-700 rounded text-[10.5px]"
+                                  className="px-2 py-0.5 bg-slate-200 text-slate-700 rounded text-[10.5px] disabled:cursor-not-allowed disabled:opacity-60"
                                 >
                                   Cancel
                                 </button>

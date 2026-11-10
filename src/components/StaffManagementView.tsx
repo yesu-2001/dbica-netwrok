@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import {
   Users,
@@ -87,6 +87,10 @@ export const StaffManagementView: React.FC = () => {
   const [formQuotaEarned, setFormQuotaEarned] = useState(globalThresholds.earned);
   const [formThresholdReason, setFormThresholdReason] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
+  const [isAddingStaff, setIsAddingStaff] = useState(false);
+  const [isSavingBalance, setIsSavingBalance] = useState(false);
+  const addStaffInProgress = useRef(false);
+  const balanceSaveInProgress = useRef(false);
 
   // RBAC permission check: Super Admin and HR only
   const isSuperAdmin = currentUser.role === 'Super Admin';
@@ -144,6 +148,7 @@ export const StaffManagementView: React.FC = () => {
   // Handle Add Submit
   const handleAddSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (addStaffInProgress.current) return;
     if (!formName.trim() || !formEmail.trim()) {
       setFormError('Staff name and official email are required.');
       return;
@@ -151,6 +156,9 @@ export const StaffManagementView: React.FC = () => {
 
     const chosenPassword = formPassword.trim() || 'dbica@2026';
 
+    addStaffInProgress.current = true;
+    setIsAddingStaff(true);
+    try {
     const res = await addStaff({
       name: formName.trim(),
       email: formEmail.trim(),
@@ -189,6 +197,13 @@ export const StaffManagementView: React.FC = () => {
       setShowModalPassword(false);
     } else {
       setFormError(res.error || 'Failed to add staff member.');
+    }
+    } catch (error) {
+      console.error('[StaffManagementView] Failed to add staff member:', error);
+      setFormError(error instanceof Error ? error.message : 'Failed to add staff member.');
+    } finally {
+      addStaffInProgress.current = false;
+      setIsAddingStaff(false);
     }
   };
 
@@ -232,27 +247,38 @@ export const StaffManagementView: React.FC = () => {
   // Handle Balance & Threshold Adjust Submit
   const handleBalanceSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!balanceStaff) return;
+    if (!balanceStaff || balanceSaveInProgress.current) return;
+    balanceSaveInProgress.current = true;
+    setIsSavingBalance(true);
+    try {
+      const res = await updateStaffLeaveThresholds(
+        balanceStaff.id,
+        {
+          casual: Number(formQuotaCasual),
+          sick: Number(formQuotaSick),
+          earned: Number(formQuotaEarned),
+          compensatory: Number(formQuotaEarned),
+        },
+        {
+          casual: Number(formCasual),
+          sick: Number(formSick),
+          earned: Number(formEarned),
+          compensatory: Number(formEarned),
+        },
+        formThresholdReason.trim() || undefined
+      );
 
-    const res = await updateStaffLeaveThresholds(
-      balanceStaff.id,
-      {
-        casual: Number(formQuotaCasual),
-        sick: Number(formQuotaSick),
-        earned: Number(formQuotaEarned),
-        compensatory: Number(formQuotaEarned),
-      },
-      {
-        casual: Number(formCasual),
-        sick: Number(formSick),
-        earned: Number(formEarned),
-        compensatory: Number(formEarned),
-      },
-      formThresholdReason.trim() || undefined
-    );
-
-    if (res.success) {
-      setBalanceStaff(null);
+      if (res.success) {
+        setBalanceStaff(null);
+      } else {
+        addToast('Unable to Save Changes', res.error || 'Failed to update staff leave quotas and balances.', 'error');
+      }
+    } catch (error) {
+      console.error('[StaffManagementView] Failed to save staff leave balance:', error);
+      addToast('Unable to Save Changes', error instanceof Error ? error.message : 'Failed to update staff leave quotas and balances.', 'error');
+    } finally {
+      balanceSaveInProgress.current = false;
+      setIsSavingBalance(false);
     }
   };
 
@@ -594,8 +620,9 @@ export const StaffManagementView: React.FC = () => {
                 <h3 className="text-base font-bold text-slate-900">Add New DBICA Staff Member</h3>
               </div>
               <button
+                disabled={isAddingStaff}
                 onClick={() => setIsAddModalOpen(false)}
-                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100"
+                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -796,6 +823,7 @@ export const StaffManagementView: React.FC = () => {
               <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
                 <button
                   type="button"
+                  disabled={isAddingStaff}
                   onClick={() => setIsAddModalOpen(false)}
                   className="px-4 py-2 font-medium text-slate-600 hover:bg-slate-100 rounded-xl"
                 >
@@ -803,10 +831,11 @@ export const StaffManagementView: React.FC = () => {
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow-sm shadow-blue-600/30 flex items-center gap-1.5 cursor-pointer"
+                  disabled={isAddingStaff}
+                  className="px-4 py-2 font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow-sm shadow-blue-600/30 flex items-center gap-1.5 cursor-pointer disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  <UserPlus className="w-4 h-4" />
-                  <span>Onboard &amp; Generate Access Slip</span>
+                  {isAddingStaff ? <RefreshCw className="w-4 h-4 animate-spin" /> : <UserPlus className="w-4 h-4" />}
+                  <span>{isAddingStaff ? 'Creating Staff Account...' : 'Onboard & Generate Access Slip'}</span>
                 </button>
               </div>
             </form>
@@ -1182,8 +1211,9 @@ export const StaffManagementView: React.FC = () => {
                 <h3 className="text-base font-bold text-slate-900">Manage Leave Thresholds & Balance</h3>
               </div>
               <button
+                disabled={isSavingBalance}
                 onClick={() => setBalanceStaff(null)}
-                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100"
+                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -1314,16 +1344,18 @@ export const StaffManagementView: React.FC = () => {
                 <div className="flex items-center gap-2 ml-auto">
                   <button
                     type="button"
+                    disabled={isSavingBalance}
                     onClick={() => setBalanceStaff(null)}
-                    className="px-4 py-2 font-medium text-slate-600 hover:bg-slate-100 rounded-xl"
+                    className="px-4 py-2 font-medium text-slate-600 hover:bg-slate-100 rounded-xl disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
-                    className="px-4 py-2 font-semibold text-white bg-purple-600 hover:bg-purple-700 rounded-xl shadow-sm"
+                    disabled={isSavingBalance}
+                    className="px-4 py-2 font-semibold text-white bg-purple-600 hover:bg-purple-700 rounded-xl shadow-sm disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    Save Quotas & Balances
+                    {isSavingBalance ? 'Saving...' : 'Save Quotas & Balances'}
                   </button>
                 </div>
               </div>

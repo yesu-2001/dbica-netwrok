@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useApp } from '../context/AppContext';
 import {
   X,
@@ -13,6 +13,7 @@ import {
   CalendarCheck,
   Moon,
   Sparkles,
+  Loader2,
 } from 'lucide-react';
 import { LeaveType } from '../types';
 import { calculateWorkingDays, parseTimeToMinutes } from '../utils/dateUtils';
@@ -51,6 +52,8 @@ export const ApplyLeaveModal: React.FC<ApplyLeaveModalProps> = ({
   const [reason, setReason] = useState('');
   const [emergencyContact, setEmergencyContact] = useState('');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const submissionInProgress = useRef(false);
 
   // Set default dates and reset form when opening
   useEffect(() => {
@@ -75,6 +78,10 @@ export const ApplyLeaveModal: React.FC<ApplyLeaveModalProps> = ({
       setWorkedDutyDetails('');
       setPermissionStartTime('09:30');
       setPermissionEndTime('10:30');
+      setReason('');
+      setEmergencyContact('');
+      setIsSubmitting(false);
+      submissionInProgress.current = false;
 
       const normalizedType: LeaveType =
         (initialType as string) === 'Earned' ? 'Compensatory' : initialType || 'Casual';
@@ -117,8 +124,9 @@ export const ApplyLeaveModal: React.FC<ApplyLeaveModalProps> = ({
 
   const isSubmitDisabled = !isPermission && isLeaveInsufficient;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submissionInProgress.current) return;
     setErrorMsg(null);
 
     if (!emergencyContact.trim()) {
@@ -190,29 +198,46 @@ export const ApplyLeaveModal: React.FC<ApplyLeaveModalProps> = ({
       ? reason.trim() || `Compensatory leave claimed for working on ${workedDate} (${workedHours}h - ${workedPeriodType}): ${workedDutyDetails.trim()}`
       : reason.trim();
 
-    const result = applyLeave({
-      leaveType: isCompensatory ? 'Compensatory' : leaveType,
-      startDate,
-      endDate: isPermission ? startDate : isCompensatory ? (endDate || startDate) : endDate,
-      reason: finalReason,
-      emergencyContact: emergencyContact.trim(),
-      permissionMinutes: isPermission ? permissionDurationMinutes : undefined,
-      permissionStartTime: isPermission ? permissionStartTime : undefined,
-      permissionEndTime: isPermission ? permissionEndTime : undefined,
-      workedDate: isCompensatory ? workedDate : undefined,
-      workedHours: isCompensatory ? Number(workedHours) : undefined,
-      workedDutyDetails: isCompensatory ? workedDutyDetails.trim() : undefined,
-      workedPeriodType: isCompensatory ? workedPeriodType : undefined,
-      compensatoryLeaveDate: isCompensatory ? startDate : undefined,
-    });
+    submissionInProgress.current = true;
+    setIsSubmitting(true);
+    try {
+      const result = await applyLeave({
+        leaveType: isCompensatory ? 'Compensatory' : leaveType,
+        startDate,
+        endDate: isPermission ? startDate : isCompensatory ? (endDate || startDate) : endDate,
+        reason: finalReason,
+        emergencyContact: emergencyContact.trim(),
+        permissionMinutes: isPermission ? permissionDurationMinutes : undefined,
+        permissionStartTime: isPermission ? permissionStartTime : undefined,
+        permissionEndTime: isPermission ? permissionEndTime : undefined,
+        workedDate: isCompensatory ? workedDate : undefined,
+        workedHours: isCompensatory ? Number(workedHours) : undefined,
+        workedDutyDetails: isCompensatory ? workedDutyDetails.trim() : undefined,
+        workedPeriodType: isCompensatory ? workedPeriodType : undefined,
+        compensatoryLeaveDate: isCompensatory ? startDate : undefined,
+      });
 
-    if (result.success) {
-      setReason('');
-      setWorkedDutyDetails('');
-      setEmergencyContact('');
-      onClose();
-    } else {
-      setErrorMsg(result.error || 'Failed to submit leave application.');
+      if (result.success) {
+        setReason('');
+        setEmergencyContact('');
+        setWorkedDutyDetails('');
+        setStartDate('');
+        setEndDate('');
+        setWorkedDate('');
+        setWorkedHours(8);
+        setWorkedPeriodType('After Office Hours');
+        setPermissionStartTime('09:30');
+        setPermissionEndTime('10:30');
+        onClose();
+      } else {
+        setErrorMsg(result.error || 'Failed to submit leave application.');
+      }
+    } catch (error) {
+      console.error('[ApplyLeaveModal] Leave submission failed:', error);
+      setErrorMsg(error instanceof Error ? error.message : 'Failed to submit leave application.');
+    } finally {
+      submissionInProgress.current = false;
+      setIsSubmitting(false);
     }
   };
 
@@ -753,16 +778,17 @@ export const ApplyLeaveModal: React.FC<ApplyLeaveModalProps> = ({
           <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
             <button
               type="button"
+              disabled={isSubmitting}
               onClick={onClose}
-              className="px-4 py-2 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded-xl transition-colors"
+              className="px-4 py-2 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded-xl transition-colors disabled:cursor-not-allowed disabled:opacity-60"
             >
               Cancel
             </button>
             <button
               type="submit"
-              disabled={isSubmitDisabled}
+              disabled={isSubmitDisabled || isSubmitting}
               className={`px-5 py-2 text-xs font-semibold text-white rounded-xl shadow-sm transition-all ${
-                isSubmitDisabled
+                isSubmitDisabled || isSubmitting
                   ? 'bg-slate-400 cursor-not-allowed opacity-60'
                   : isPermission
                   ? 'bg-violet-600 hover:bg-violet-700 shadow-violet-600/30'
@@ -771,7 +797,12 @@ export const ApplyLeaveModal: React.FC<ApplyLeaveModalProps> = ({
                   : 'bg-blue-600 hover:bg-blue-700 shadow-blue-600/30'
               }`}
             >
-              {isPermission
+              {isSubmitting ? (
+                <span className="inline-flex items-center gap-2">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  Submitting request...
+                </span>
+              ) : isPermission
                 ? `Submit Permission (${permissionDurationMinutes} Mins)`
                 : isCompensatory
                 ? `Claim Compensatory Leave (${totalWorkingDays} Day${totalWorkingDays > 1 ? 's' : ''})`

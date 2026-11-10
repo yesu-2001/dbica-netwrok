@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useApp } from '../context/AppContext';
 import { X, UserCheck, Mail, Building, Phone, Briefcase, AlertCircle, Shield, CheckCircle, Lock, Eye, EyeOff } from 'lucide-react';
 import { Department } from '../types';
@@ -21,6 +21,7 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({ isOpen, onCl
   const [showPass, setShowPass] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const saveInProgress = useRef(false);
 
   // Sync with current user when opening
   useEffect(() => {
@@ -40,6 +41,7 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({ isOpen, onCl
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (saveInProgress.current) return;
     setErrorMsg(null);
 
     if (newPassword.trim()) {
@@ -53,6 +55,7 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({ isOpen, onCl
       }
     }
 
+    saveInProgress.current = true;
     setIsSaving(true);
     try {
       const result = await updateOwnProfile({
@@ -69,7 +72,11 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({ isOpen, onCl
       } else {
         setErrorMsg(result.error || 'Failed to update profile.');
       }
+    } catch (error) {
+      console.error('[EditProfileModal] Profile update failed:', error);
+      setErrorMsg(error instanceof Error ? error.message : 'Failed to update profile.');
     } finally {
+      saveInProgress.current = false;
       setIsSaving(false);
     }
   };
@@ -92,6 +99,7 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({ isOpen, onCl
           </div>
           <button
             onClick={onClose}
+            disabled={isSaving}
             className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition-colors"
           >
             <X className="w-5 h-5" />

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { X, ShieldAlert } from 'lucide-react';
 import { LeaveRequest, LeaveStatus } from '../types';
@@ -19,23 +19,36 @@ export const OverrideLeaveModal: React.FC<OverrideLeaveModalProps> = ({
   const [newStatus, setNewStatus] = useState<LeaveStatus>('Approved');
   const [reason, setReason] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const submissionInProgress = useRef(false);
 
   if (!isOpen || !request || currentUser.role !== 'Super Admin') return null;
 
-  const handleOverride = (e: React.FormEvent) => {
+  const handleOverride = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submissionInProgress.current) return;
     if (!reason.trim()) {
       setError('A super admin justification note is required for audit logging.');
       return;
     }
 
-    const result = overrideLeave(request.id, newStatus, reason.trim());
-    if (result.success) {
-      setReason('');
-      setError(null);
-      onClose();
-    } else {
-      setError(result.error || 'Failed to override status.');
+    submissionInProgress.current = true;
+    setIsSubmitting(true);
+    try {
+      const result = await overrideLeave(request.id, newStatus, reason.trim());
+      if (result.success) {
+        setReason('');
+        setError(null);
+        onClose();
+      } else {
+        setError(result.error || 'Failed to override status.');
+      }
+    } catch (error) {
+      console.error('[OverrideLeaveModal] Status override failed:', error);
+      setError(error instanceof Error ? error.message : 'Failed to override status.');
+    } finally {
+      submissionInProgress.current = false;
+      setIsSubmitting(false);
     }
   };
 
@@ -49,6 +62,7 @@ export const OverrideLeaveModal: React.FC<OverrideLeaveModalProps> = ({
           </div>
           <button
             onClick={onClose}
+            disabled={isSubmitting}
             className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100"
           >
             <X className="w-5 h-5" />
@@ -87,6 +101,7 @@ export const OverrideLeaveModal: React.FC<OverrideLeaveModalProps> = ({
               {(['Approved', 'Rejected', 'Pending'] as LeaveStatus[]).map((status) => (
                 <button
                   type="button"
+                  disabled={isSubmitting}
                   key={status}
                   onClick={() => setNewStatus(status)}
                   className={`py-2 px-3 text-xs rounded-xl border text-center font-medium transition-all ${
@@ -119,15 +134,17 @@ export const OverrideLeaveModal: React.FC<OverrideLeaveModalProps> = ({
             <button
               type="button"
               onClick={onClose}
+              disabled={isSubmitting}
               className="px-4 py-2 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded-xl"
             >
               Cancel
             </button>
             <button
               type="submit"
+              disabled={isSubmitting}
               className="px-4 py-2 text-xs font-semibold text-white bg-amber-600 hover:bg-amber-700 rounded-xl shadow-sm"
             >
-              Apply Super Admin Override
+              {isSubmitting ? 'Applying override...' : 'Apply Super Admin Override'}
             </button>
           </div>
         </form>

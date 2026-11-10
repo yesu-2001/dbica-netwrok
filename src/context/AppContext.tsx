@@ -23,6 +23,7 @@ import {
 } from '../data/seedData';
 import { calculateWorkingDays, parseTimeToMinutes } from '../utils/dateUtils';
 import { mockEmailService } from '../services/mockEmailService';
+import { emailJsNotificationService } from '../services/emailJsNotificationService';
 import { firestoreService } from '../services/firestoreService';
 import { notificationService } from '../services/notificationService';
 import {
@@ -107,17 +108,17 @@ interface AppContextType {
     workedDutyDetails?: string;
     workedPeriodType?: 'After Office Hours' | 'Weekend Duty (Saturday/Sunday)' | 'Holiday Duty' | 'Special Event / Official Duty' | string;
     compensatoryLeaveDate?: string;
-  }) => { success: boolean; error?: string };
+  }) => Promise<{ success: boolean; error?: string }>;
   
   getMonthlyPermissionUsage: (staffId: string, monthStr?: string) => {
     usedMinutes: number;
     requestsCount: number;
   };
   
-  cancelLeave: (requestId: string) => { success: boolean; error?: string };
-  approveLeave: (requestId: string, approvalNote?: string) => { success: boolean; error?: string };
-  rejectLeave: (requestId: string, rejectionReason: string) => { success: boolean; error?: string };
-  overrideLeave: (requestId: string, newStatus: LeaveRequest['status'], reason: string) => { success: boolean; error?: string };
+  cancelLeave: (requestId: string) => Promise<{ success: boolean; error?: string }>;
+  approveLeave: (requestId: string, approvalNote?: string) => Promise<{ success: boolean; error?: string }>;
+  rejectLeave: (requestId: string, rejectionReason: string) => Promise<{ success: boolean; error?: string }>;
+  overrideLeave: (requestId: string, newStatus: LeaveRequest['status'], reason: string) => Promise<{ success: boolean; error?: string }>;
 
   // Staff Directory & Management
   addStaff: (staffData: Omit<StaffMember, 'id'>) => Promise<{
@@ -1168,8 +1169,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
   };
 
+  const reportEmailDelivery = (
+    eventLabel: string,
+    result: {sent: number; failed: number; error?: string}
+  ) => {
+    if (result.failed > 0) {
+      addToast(
+        'Email delivery issue',
+        `${eventLabel}: ${result.sent} sent, ${result.failed} failed. ${result.error || ''}`.trim(),
+        'warning'
+      );
+    }
+  };
+
   // Apply Leave & Permission
-  const applyLeave = ({
+  const applyLeave = async ({
     leaveType,
     startDate,
     endDate,
@@ -1197,7 +1211,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     workedDutyDetails?: string;
     workedPeriodType?: 'After Office Hours' | 'Weekend Duty (Saturday/Sunday)' | 'Holiday Duty' | 'Special Event / Official Duty' | string;
     compensatoryLeaveDate?: string;
-  }) => {
+  }): Promise<{success: boolean; error?: string}> => {
     // Permission requests are reviewed individually; no monthly quota applies.
     if (leaveType === 'Permission') {
       if (!startDate) {
@@ -1235,6 +1249,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         appliedAt: new Date().toISOString(),
       };
 
+      const saved = await firestoreService.saveLeaveRequest(newRequest);
+      if (!saved) {
+        return {success: false, error: 'Could not save your permission request. Please try again.'};
+      }
+
       setLeaveRequests((prev) => [newRequest, ...prev]);
       createAuditEntry(
         'PERMISSION_APPLIED',
@@ -1242,8 +1261,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         newRequest.id
       );
 
-      // Save to Firestore database
-      firestoreService.saveLeaveRequest(newRequest);
+      const emailResult = await emailJsNotificationService.notifyNewLeaveRequest(newRequest, staffList);
+      reportEmailDelivery('New request notifications', emailResult);
 
       // Dispatch notifications
       const hodStaff =
@@ -1321,6 +1340,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         appliedAt: new Date().toISOString(),
       };
 
+      const saved = await firestoreService.saveLeaveRequest(newRequest);
+      if (!saved) {
+        return {success: false, error: 'Could not save your compensatory leave request. Please try again.'};
+      }
+
       setLeaveRequests((prev) => [newRequest, ...prev]);
       createAuditEntry(
         'COMPENSATORY_LEAVE_APPLIED',
@@ -1328,9 +1352,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         newRequest.id
       );
 
-      // Save to Firestore database
-      firestoreService.saveLeaveRequest(newRequest);
-      mockEmailService.notifyLeaveSubmitted(newRequest);
+      const emailResult = await emailJsNotificationService.notifyNewLeaveRequest(newRequest, staffList);
+      reportEmailDelivery('New request notifications', emailResult);
 
       const hodStaff =
         staffList.find((s) => s.department === currentUser.department && s.role === 'Manager') ||
@@ -1400,6 +1423,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       appliedAt: new Date().toISOString(),
     };
 
+    const saved = await firestoreService.saveLeaveRequest(newRequest);
+    if (!saved) {
+      return {success: false, error: 'Could not save your leave request. Please try again.'};
+    }
+
     setLeaveRequests((prev) => [newRequest, ...prev]);
     createAuditEntry(
       'LEAVE_APPLIED',
@@ -1407,11 +1435,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       newRequest.id
     );
 
-    // Save to Firestore database
-    firestoreService.saveLeaveRequest(newRequest);
-
-    // Dispatch mock email notifications
-    mockEmailService.notifyLeaveSubmitted(newRequest);
+    const emailResult = await emailJsNotificationService.notifyNewLeaveRequest(newRequest, staffList);
+    reportEmailDelivery('New request notifications', emailResult);
 
     // Notify reviewers; the applicant is notified after a decision is recorded.
     const hodStaff =
@@ -1434,10 +1459,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   // Cancel own pending leave
-  const cancelLeave = (requestId: string) => {
+  const legacyCancelLeave = (requestId: string) => {
     const target = leaveRequests.find((r) => r.id === requestId);
     if (!target) return { success: false, error: 'Leave request not found.' };
-
     if (target.staffId !== currentUser.id && currentUser.role !== 'Super Admin') {
       return { success: false, error: 'You can only cancel your own leave requests.' };
     }
@@ -1475,7 +1499,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   // Approve leave
-  const approveLeave = (requestId: string, approvalNote?: string) => {
+  const legacyApproveLeave = (requestId: string, approvalNote?: string) => {
     // RBAC: Staff cannot approve
     if (currentUser.role === 'Staff') {
       return { success: false, error: 'Staff members do not have approval permissions.' };
@@ -1581,7 +1605,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   // Reject leave
-  const rejectLeave = (requestId: string, rejectionReason: string) => {
+  const legacyRejectLeave = (requestId: string, rejectionReason: string) => {
     if (currentUser.role === 'Staff') {
       return { success: false, error: 'Staff members do not have rejection permissions.' };
     }
@@ -1650,7 +1674,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   // Super Admin override
-  const overrideLeave = (requestId: string, newStatus: LeaveRequest['status'], reason: string) => {
+  const legacyOverrideLeave = (requestId: string, newStatus: LeaveRequest['status'], reason: string) => {
     if (currentUser.role !== 'Super Admin') {
       return { success: false, error: 'Only Super Admin can override leave statuses.' };
     }
@@ -1759,6 +1783,219 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     addToast('Override Applied', `Status updated to ${newStatus} in Cloud Firestore.`, 'success');
     return { success: true };
+  };
+
+  const saveLeaveStatus = async (
+    target: LeaveRequest,
+    status: LeaveRequest['status'],
+    rejectionReason = '',
+    isOverride = false
+  ): Promise<{success: boolean; error?: string; request?: LeaveRequest}> => {
+    const actionedBy = `${currentUser.name} (${isOverride ? 'Super Admin Override' : currentUser.role})`;
+    const updates: Partial<LeaveRequest> = {
+      status,
+      actionedBy,
+      actionedAt: new Date().toISOString(),
+      rejectionReason: status === 'Rejected' ? rejectionReason : '',
+    };
+
+    const balanceKey =
+      target.leaveType === 'Casual'
+        ? 'casual'
+        : target.leaveType === 'Sick'
+          ? 'sick'
+          : target.leaveType === 'Compensatory' || (target.leaveType as string) === 'Earned'
+            ? 'compensatory'
+            : null;
+    let updatedStaff: StaffMember | undefined;
+    const wasApproved = target.status === 'Approved';
+    const willBeApproved = status === 'Approved';
+    if (balanceKey && wasApproved !== willBeApproved) {
+      const staff = staffList.find((member) => member.id === target.staffId);
+      if (!staff) {
+        return {success: false, error: 'Staff profile for the leave request was not found.'};
+      }
+
+      const currentBalance = staff.leaveBalance[balanceKey] ?? staff.leaveBalance.earned ?? 0;
+      const nextBalance = willBeApproved
+        ? Math.max(0, currentBalance - target.totalDays)
+        : currentBalance + target.totalDays;
+      const leaveBalance = {
+        ...staff.leaveBalance,
+        [balanceKey]: nextBalance,
+        ...(balanceKey === 'compensatory' ? {earned: nextBalance} : {}),
+      };
+      updatedStaff = {...staff, leaveBalance};
+    }
+
+    const saved = await firestoreService.updateLeaveRequestAndBalance(
+      target.id,
+      updates,
+      target.status,
+      updatedStaff?.id,
+      updatedStaff?.leaveBalance
+    );
+    if (!saved) {
+      const error = 'Could not update the leave request. Refresh and try again.';
+      addToast('Leave update failed', error, 'warning');
+      return {success: false, error};
+    }
+
+    const updatedRequest = {...target, ...updates};
+    setLeaveRequests((previous) => previous.map((request) =>
+      request.id === target.id ? updatedRequest : request
+    ));
+    if (updatedStaff) {
+      setStaffList((previous) => previous.map((staff) =>
+        staff.id === updatedStaff?.id ? updatedStaff : staff
+      ));
+    }
+    return {success: true, request: updatedRequest};
+  };
+
+  const sendDecisionEmail = async (
+    request: LeaveRequest,
+    status: 'Approved' | 'Rejected',
+    rejectionReason?: string
+  ) => {
+    const result = await emailJsNotificationService.notifyLeaveDecision(
+      request,
+      request.actionedBy || `${currentUser.name} (${currentUser.role})`,
+      staffList,
+      status,
+      rejectionReason
+    );
+    reportEmailDelivery(`${status} request notifications`, result);
+  };
+
+  const cancelLeave = async (requestId: string): Promise<{success: boolean; error?: string}> => {
+    const target = leaveRequests.find((request) => request.id === requestId);
+    if (!target) return {success: false, error: 'Leave request not found.'};
+    if (target.staffId !== currentUser.id && currentUser.role !== 'Super Admin') {
+      return {success: false, error: 'You can only cancel your own leave requests.'};
+    }
+    if (target.status !== 'Pending') {
+      return {success: false, error: 'Only Pending leave requests can be cancelled.'};
+    }
+
+    const result = await saveLeaveStatus(target, 'Cancelled');
+    if (!result.success) return result;
+    createAuditEntry('LEAVE_CANCELLED', `Cancelled leave request #${requestId} (${target.leaveType})`, requestId);
+    addToast('Request Cancelled', 'The pending leave request has been cancelled.', 'info');
+    return {success: true};
+  };
+
+  const approveLeave = async (
+    requestId: string,
+    approvalNote?: string
+  ): Promise<{success: boolean; error?: string}> => {
+    if (!['Super Admin', 'HR', 'Manager'].includes(currentUser.role)) {
+      return {success: false, error: 'You do not have leave approval permissions.'};
+    }
+    const target = leaveRequests.find((request) => request.id === requestId);
+    if (!target) return {success: false, error: 'Leave request not found.'};
+    if (currentUser.role === 'Manager' && target.department !== currentUser.department) {
+      return {success: false, error: `As Manager of ${currentUser.department}, you can only review leaves in your department.`};
+    }
+    if (target.status !== 'Pending') {
+      return {success: false, error: 'Only Pending leave requests can be approved.'};
+    }
+
+    const result = await saveLeaveStatus(target, 'Approved');
+    if (!result.success || !result.request) return result;
+    const actionedBy = result.request.actionedBy || `${currentUser.name} (${currentUser.role})`;
+    createAuditEntry(
+      'LEAVE_APPROVED',
+      `Approved ${target.totalDays} day(s) ${target.leaveType} leave for ${target.staffName}.${approvalNote ? ` Note: "${approvalNote}"` : ''}`,
+      requestId
+    );
+    await sendDecisionEmail(result.request, 'Approved');
+    void notificationService.dispatchLeaveApproved(
+      result.request,
+      actionedBy,
+      staffList.find((staff) => staff.id === target.staffId)?.phone,
+      approvalNote
+    ).catch((error) => console.error('[AppContext] Could not record approval notification:', error));
+    addToast('Leave Approved', `Leave request for ${target.staffName} was approved.`, 'success');
+    return {success: true};
+  };
+
+  const rejectLeave = async (
+    requestId: string,
+    rejectionReason: string
+  ): Promise<{success: boolean; error?: string}> => {
+    if (!rejectionReason.trim()) return {success: false, error: 'A rejection comment is mandatory.'};
+    if (!['Super Admin', 'HR', 'Manager'].includes(currentUser.role)) {
+      return {success: false, error: 'You do not have leave rejection permissions.'};
+    }
+    const target = leaveRequests.find((request) => request.id === requestId);
+    if (!target) return {success: false, error: 'Leave request not found.'};
+    if (currentUser.role === 'Manager' && target.department !== currentUser.department) {
+      return {success: false, error: `As Manager of ${currentUser.department}, you can only review leaves in your department.`};
+    }
+    if (target.status !== 'Pending') {
+      return {success: false, error: 'Only Pending leave requests can be rejected.'};
+    }
+
+    const reason = rejectionReason.trim();
+    const result = await saveLeaveStatus(target, 'Rejected', reason);
+    if (!result.success || !result.request) return result;
+    const actionedBy = result.request.actionedBy || `${currentUser.name} (${currentUser.role})`;
+    createAuditEntry(
+      'LEAVE_REJECTED',
+      `Rejected ${target.staffName}'s ${target.leaveType} leave. Reason: "${reason}"`,
+      requestId
+    );
+    await sendDecisionEmail(result.request, 'Rejected', reason);
+    void notificationService.dispatchLeaveRejected(
+      result.request,
+      actionedBy,
+      reason,
+      staffList.find((staff) => staff.id === target.staffId)?.phone
+    ).catch((error) => console.error('[AppContext] Could not record rejection notification:', error));
+    addToast('Leave Rejected', `Leave request for ${target.staffName} was rejected.`, 'warning');
+    return {success: true};
+  };
+
+  const overrideLeave = async (
+    requestId: string,
+    newStatus: LeaveRequest['status'],
+    reason: string
+  ): Promise<{success: boolean; error?: string}> => {
+    if (currentUser.role !== 'Super Admin') {
+      return {success: false, error: 'Only Super Admin can override leave statuses.'};
+    }
+    const target = leaveRequests.find((request) => request.id === requestId);
+    if (!target) return {success: false, error: 'Leave request not found.'};
+
+    const result = await saveLeaveStatus(target, newStatus, reason.trim(), true);
+    if (!result.success || !result.request) return result;
+    createAuditEntry(
+      'ADMIN_OVERRIDE',
+      `Super Admin overrode request #${requestId} from ${target.status} to ${newStatus}. Note: ${reason}`,
+      requestId
+    );
+    if (target.status !== newStatus && (newStatus === 'Approved' || newStatus === 'Rejected')) {
+      await sendDecisionEmail(result.request, newStatus, reason.trim());
+      const actionedBy = result.request.actionedBy || `${currentUser.name} (Super Admin Override)`;
+      if (newStatus === 'Approved') {
+        void notificationService.dispatchLeaveApproved(
+          result.request,
+          actionedBy,
+          staffList.find((staff) => staff.id === target.staffId)?.phone,
+          reason
+        ).catch((error) => console.error('[AppContext] Could not record override notification:', error));
+      } else {
+        void notificationService.dispatchLeaveRejected(
+          result.request,
+          actionedBy,
+          reason,
+          staffList.find((staff) => staff.id === target.staffId)?.phone
+        ).catch((error) => console.error('[AppContext] Could not record override notification:', error));
+      }
+    }
+    addToast('Override Applied', `Status updated to ${newStatus}.`, 'success');
+    return {success: true};
   };
 
   // Staff CRUD
