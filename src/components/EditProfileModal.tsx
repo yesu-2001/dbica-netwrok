@@ -176,7 +176,8 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({ isOpen, onCl
               <select
                 value={department}
                 onChange={(e) => setDepartment(e.target.value as Department)}
-                className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white font-medium text-slate-800"
+                disabled={currentUser.role === 'Manager'}
+                className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white font-medium text-slate-800 disabled:bg-slate-100 disabled:text-slate-500"
               >
                 {departments.map((dept) => (
                   <option key={dept} value={dept}>
@@ -184,6 +185,9 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({ isOpen, onCl
                   </option>
                 ))}
               </select>
+              {currentUser.role === 'Manager' && (
+                <p className="mt-1 text-[11px] text-slate-500">Department changes are managed by HR.</p>
+              )}
             </div>
 
             <div>

@@ -24,6 +24,8 @@ import {
   AuditLog,
   DispatchedNotification,
   TimesheetEntry,
+  DailyAttendance,
+  MonthlyAttendanceSummary,
 } from '../types';
 import {
   INITIAL_STAFF_MEMBERS,
@@ -281,7 +283,8 @@ export class FirestoreService {
     onData: (entries: TimesheetEntry[]) => void,
     onError?: (err: any) => void,
     staffId?: string,
-    staffEmail?: string
+    staffEmail?: string,
+    department?: string
   ): Unsubscribe {
     const timesheetCollection = collection(db, COLLECTIONS.TIMESHEETS);
     const entriesQuery = staffId && staffEmail
@@ -290,6 +293,8 @@ export class FirestoreService {
           where('staffId', '==', staffId),
           where('staffEmail', '==', staffEmail)
         )
+      : department
+      ? query(timesheetCollection, where('department', '==', department))
       : timesheetCollection;
     return onSnapshot(
       entriesQuery,
@@ -298,6 +303,105 @@ export class FirestoreService {
       },
       (err) => {
         console.warn('[Firestore] Timesheet snapshot error:', err);
+        onError?.(err);
+      }
+    );
+  }
+
+  subscribeDailyAttendance(
+    staffId: string,
+    onData: (records: DailyAttendance[]) => void,
+    onError?: (err: any) => void
+  ): Unsubscribe {
+    return onSnapshot(
+      query(collection(db, COLLECTIONS.DAILY_ATTENDANCE), where('staffId', '==', staffId)),
+      (snap) => {
+        onData(snap.docs.map((d) => ({ ...d.data(), id: d.id }) as DailyAttendance));
+      },
+      (err) => {
+        console.warn('[Firestore] Daily attendance snapshot error:', err);
+        onError?.(err);
+      }
+    );
+  }
+
+  subscribeMonthlyAttendanceSummary(
+    staffId: string,
+    onData: (summaries: MonthlyAttendanceSummary[]) => void,
+    onError?: (err: any) => void
+  ): Unsubscribe {
+    return onSnapshot(
+      query(collection(db, COLLECTIONS.MONTHLY_ATTENDANCE_SUMMARY), where('staffId', '==', staffId)),
+      (snap) => {
+        onData(snap.docs.map((d) => ({ ...d.data(), id: d.id }) as MonthlyAttendanceSummary));
+      },
+      (err) => {
+        console.warn('[Firestore] Monthly attendance snapshot error:', err);
+        onError?.(err);
+      }
+    );
+  }
+
+  subscribeAttendanceReportSummaries(
+    onData: (summaries: MonthlyAttendanceSummary[]) => void,
+    onError?: (err: any) => void,
+    department?: string
+  ): Unsubscribe {
+    const summariesCollection = collection(db, COLLECTIONS.MONTHLY_ATTENDANCE_SUMMARY);
+    const summariesQuery = department
+      ? query(summariesCollection, where('department', '==', department))
+      : summariesCollection;
+    return onSnapshot(
+      summariesQuery,
+      (snap) => {
+        onData(snap.docs.map((d) => ({ ...d.data(), id: d.id }) as MonthlyAttendanceSummary));
+      },
+      (err) => {
+        console.warn('[Firestore] Attendance report summary snapshot error:', err);
+        onError?.(err);
+      }
+    );
+  }
+
+  subscribeAttendanceReportDaily(
+    staffId: string,
+    onData: (records: DailyAttendance[]) => void,
+    onError?: (err: any) => void,
+    department?: string
+  ): Unsubscribe {
+    const dailyCollection = collection(db, COLLECTIONS.DAILY_ATTENDANCE);
+    const recordsQuery = department
+      ? query(dailyCollection, where('department', '==', department))
+      : query(dailyCollection, where('staffId', '==', staffId));
+    return onSnapshot(
+      recordsQuery,
+      (snap) => {
+        onData(snap.docs.map((d) => ({ ...d.data(), id: d.id }) as DailyAttendance));
+      },
+      (err) => {
+        console.warn('[Firestore] Attendance report daily snapshot error:', err);
+        onError?.(err);
+      }
+    );
+  }
+
+  subscribeAttendanceRange(
+    startDate: string,
+    endDate: string,
+    onData: (records: DailyAttendance[]) => void,
+    onError?: (err: any) => void
+  ): Unsubscribe {
+    return onSnapshot(
+      query(
+        collection(db, COLLECTIONS.DAILY_ATTENDANCE),
+        where('date', '>=', startDate),
+        where('date', '<=', endDate)
+      ),
+      (snap) => {
+        onData(snap.docs.map((d) => ({ ...d.data(), id: d.id }) as DailyAttendance));
+      },
+      (err) => {
+        console.warn('[Firestore] Attendance date-range snapshot error:', err);
         onError?.(err);
       }
     );

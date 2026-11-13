@@ -122,6 +122,8 @@ export const COLLECTIONS = {
   SETTINGS: 'settings',
   AUDIT_LOGS: 'auditLogs',
   NOTIFICATIONS: 'notifications',
+  DAILY_ATTENDANCE: 'daily_attendance',
+  MONTHLY_ATTENDANCE_SUMMARY: 'monthly_summary',
 } as const;
 
 export default app;

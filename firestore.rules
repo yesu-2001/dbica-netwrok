@@ -45,9 +45,45 @@ service cloud.firestore {
         && data.createdAt is string && data.createdAt.size() <= 40;
     }
 
+    function hasAttendanceAccess() {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/attendanceAccess/$(request.auth.uid))
+        && get(/databases/$(database)/documents/attendanceAccess/$(request.auth.uid)).data.enabled == true;
+    }
+
+    function isPrimaryAdmin() {
+      return request.auth != null && request.auth.token.email == 'director@dbica.org';
+    }
+
+    function isSuperAdmin() {
+      return isPrimaryAdmin()
+        || (hasAttendanceAccess()
+          && get(/databases/$(database)/documents/attendanceAccess/$(request.auth.uid)).data.role == 'Super Admin');
+    }
+
+    function isHR() {
+      return hasAttendanceAccess()
+        && get(/databases/$(database)/documents/attendanceAccess/$(request.auth.uid)).data.role == 'HR';
+    }
+
+    function isOwnStaffProfileUpdate(staffId) {
+      return hasAttendanceAccess()
+        && get(/databases/$(database)/documents/attendanceAccess/$(request.auth.uid)).data.staffId == staffId
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly([
+            'name', 'phone', 'department', 'designation', 'portalPassword',
+            'failedLoginAttempts', 'lockoutUntil', 'lastLoginAt'
+          ])
+        && (
+          get(/databases/$(database)/documents/attendanceAccess/$(request.auth.uid)).data.role != 'Manager'
+          || request.resource.data.department == resource.data.department
+        );
+    }
+
     function isTimesheetOwner(data) {
       return request.auth != null
         && exists(/databases/$(database)/documents/staff/$(data.staffId))
+        && get(/databases/$(database)/documents/staff/$(data.staffId)).data.role != 'Super Admin'
         && (
           (
             'authUid' in get(/databases/$(database)/documents/staff/$(data.staffId)).data
@@ -56,6 +92,24 @@ service cloud.firestore {
           || (
             get(/databases/$(database)/documents/staff/$(data.staffId)).data.email == data.staffEmail
             && get(/databases/$(database)/documents/staff/$(data.staffId)).data.email == request.auth.token.email
+          )
+        );
+    }
+
+    function canReadAllAttendance() {
+      return isPrimaryAdmin()
+        || (hasAttendanceAccess()
+          && get(/databases/$(database)/documents/attendanceAccess/$(request.auth.uid)).data.role in ['Super Admin', 'HR']);
+    }
+
+    function canReadOwnOrDepartmentAttendance(data) {
+      return request.auth != null
+        && hasAttendanceAccess()
+        && (
+          data.staffId == get(/databases/$(database)/documents/attendanceAccess/$(request.auth.uid)).data.staffId
+          || (
+            get(/databases/$(database)/documents/attendanceAccess/$(request.auth.uid)).data.role == 'Manager'
+            && data.department == get(/databases/$(database)/documents/attendanceAccess/$(request.auth.uid)).data.department
           )
         );
     }
@@ -91,9 +145,26 @@ service cloud.firestore {
     // Faculty and staff accounts & credentials
     match /staff/{staffId} {
       allow read: if true;
-      allow create: if isValidId(staffId) && isValidStaff(request.resource.data);
-      allow update: if isValidId(staffId) && isValidStaff(request.resource.data);
-      allow delete: if isValidId(staffId);
+      allow create: if isValidId(staffId)
+        && isValidStaff(request.resource.data)
+        && (
+          isSuperAdmin()
+          || (isHR() && request.resource.data.role != 'Super Admin')
+        );
+      allow update: if isValidId(staffId)
+        && isValidStaff(request.resource.data)
+        && (
+          isSuperAdmin()
+          || (
+            isHR()
+            && resource.data.role != 'Super Admin'
+            && request.resource.data.role != 'Super Admin'
+          )
+          || isOwnStaffProfileUpdate(staffId)
+          || request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['failedLoginAttempts', 'lockoutUntil'])
+        );
+      allow delete: if isValidId(staffId) && isSuperAdmin();
     }
 
     // Leave applications & status authorizations
@@ -129,6 +200,21 @@ service cloud.firestore {
         && request.resource.data.department == resource.data.department
         && request.resource.data.createdAt == resource.data.createdAt;
       allow delete: if isTimesheetOwner(resource.data);
+    }
+
+    // Attendance authorization is maintained by the trusted sync service.
+    match /attendanceAccess/{authUid} {
+      allow read, write: if false;
+    }
+
+    match /daily_attendance/{attendanceId} {
+      allow read: if canReadAllAttendance() || canReadOwnOrDepartmentAttendance(resource.data);
+      allow write: if false;
+    }
+
+    match /monthly_summary/{summaryId} {
+      allow read: if canReadAllAttendance() || canReadOwnOrDepartmentAttendance(resource.data);
+      allow write: if false;
     }
 
     // Academic and operational departments

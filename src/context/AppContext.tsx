@@ -187,6 +187,8 @@ const STORAGE_KEYS = {
 };
 
 const DIRECTOR_ONLY_TABS: ActiveTab[] = ['requests', 'analytics', 'audit'];
+const STAFF_TIMESHEET_ROLES: StaffMember['role'][] = ['Super Admin', 'HR', 'Manager'];
+const ATTENDANCE_REPORT_ROLES: StaffMember['role'][] = ['Super Admin', 'HR', 'Manager'];
 
 // Clean legacy v1 and v2 keys containing dummy seed records
 try {
@@ -520,14 +522,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const isDirector = currentUser.role === 'Super Admin';
   const setActiveTab = (tab: ActiveTab) => {
     if (!isDirector && DIRECTOR_ONLY_TABS.includes(tab)) return;
+    if (tab === 'staff-attendance' && !ATTENDANCE_REPORT_ROLES.includes(currentUser.role)) return;
+    if (tab === 'staff-timesheets' && !STAFF_TIMESHEET_ROLES.includes(currentUser.role)) return;
+    if (tab === 'my-timesheet' && isDirector) return;
     setActiveTabState(tab);
   };
 
   useEffect(() => {
     if (!isDirector && DIRECTOR_ONLY_TABS.includes(activeTab)) {
       setActiveTabState('my-leaves');
+    } else if (activeTab === 'staff-attendance' && !ATTENDANCE_REPORT_ROLES.includes(currentUser.role)) {
+      setActiveTabState('my-attendance');
+    } else if (activeTab === 'staff-timesheets' && !STAFF_TIMESHEET_ROLES.includes(currentUser.role)) {
+      setActiveTabState('my-timesheet');
+    } else if (activeTab === 'my-timesheet' && isDirector) {
+      setActiveTabState('staff-timesheets');
     }
-  }, [isDirector, activeTab]);
+  }, [isDirector, activeTab, currentUser.role]);
 
   useEffect(() => {
     setTimesheetEntries([]);
@@ -545,11 +556,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setTimesheetLoading(false);
         setTimesheetLoadError('Timesheets could not be loaded. Check your connection or account access, then try again.');
       },
-      currentUser.role === 'Super Admin' || currentUser.role === 'HR' ? undefined : currentUser.id,
-      currentUser.role === 'Super Admin' || currentUser.role === 'HR' ? undefined : currentUser.email
+      currentUser.role === 'Staff' ? currentUser.id : undefined,
+      currentUser.role === 'Staff' ? currentUser.email : undefined,
+      currentUser.role === 'Manager' ? currentUser.department : undefined
     );
     return unsubscribe;
-  }, [currentUser.id, currentUser.role]);
+  }, [currentUser.id, currentUser.role, currentUser.email, currentUser.department]);
 
   // Save to localStorage
   useEffect(() => {
@@ -638,8 +650,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       comments: string;
     }
   ): Promise<{ success: boolean; error?: string }> => {
-    if (currentUser.role !== 'Staff') {
-      return { success: false, error: 'Only staff can add timesheet entries.' };
+    if (currentUser.role === 'Super Admin') {
+      return { success: false, error: 'Super Admin accounts cannot add timesheet entries.' };
     }
 
     let firebaseUser = auth.currentUser;
@@ -721,7 +733,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   ): Promise<{ success: boolean; error?: string }> => {
     const targetEntry = timesheetEntries.find((entry) => entry.id === entryId);
-    if (currentUser.role !== 'Staff' || !targetEntry || targetEntry.staffId !== currentUser.id) {
+    if (currentUser.role === 'Super Admin' || !targetEntry || targetEntry.staffId !== currentUser.id) {
       return { success: false, error: 'You can only update your own timesheet entries.' };
     }
 
@@ -769,7 +781,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const deleteTimesheetEntry = async (entryId: string): Promise<{ success: boolean; error?: string }> => {
     const targetEntry = timesheetEntries.find((t) => t.id === entryId);
-    if (currentUser.role !== 'Staff' || !targetEntry || targetEntry.staffId !== currentUser.id) {
+    if (currentUser.role === 'Super Admin' || !targetEntry || targetEntry.staffId !== currentUser.id) {
       return { success: false, error: 'You can only delete your own timesheet entries.' };
     }
     const firebaseUser = auth.currentUser;

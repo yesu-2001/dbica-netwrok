@@ -79,6 +79,7 @@ export const StaffManagementView: React.FC = () => {
   const [formDepartment, setFormDepartment] = useState<string>('');
   const [formRole, setFormRole] = useState<Role>('Staff');
   const [formDesignation, setFormDesignation] = useState('');
+  const [formAttendanceEmployeeId, setFormAttendanceEmployeeId] = useState('');
   const [formCasual, setFormCasual] = useState(globalThresholds.casual);
   const [formSick, setFormSick] = useState(globalThresholds.sick);
   const [formEarned, setFormEarned] = useState(globalThresholds.earned);
@@ -124,6 +125,7 @@ export const StaffManagementView: React.FC = () => {
     setFormDepartment(staff.department);
     setFormRole(staff.role);
     setFormDesignation(staff.designation);
+    setFormAttendanceEmployeeId(staff.attendanceEmployeeId || '');
     setFormError(null);
   };
 
@@ -135,6 +137,7 @@ export const StaffManagementView: React.FC = () => {
     setFormDepartment(departments[0] || 'Media Production');
     setFormRole('Staff');
     setFormDesignation('');
+    setFormAttendanceEmployeeId('');
     setFormCasual(globalThresholds.casual);
     setFormSick(globalThresholds.sick);
     setFormEarned(globalThresholds.compensatory ?? globalThresholds.earned);
@@ -166,6 +169,7 @@ export const StaffManagementView: React.FC = () => {
       department: formDepartment || departments[0] || 'Media Production',
       role: formRole,
       designation: formDesignation.trim() || 'Faculty Member',
+      attendanceEmployeeId: formAttendanceEmployeeId.trim() || undefined,
       leaveBalance: {
         casual: Number(formCasual) || 0,
         sick: Number(formSick) || 0,
@@ -235,6 +239,7 @@ export const StaffManagementView: React.FC = () => {
       department: formDepartment,
       role: formRole,
       designation: formDesignation.trim(),
+      attendanceEmployeeId: formAttendanceEmployeeId.trim() || undefined,
     });
 
     if (res.success) {
@@ -726,6 +731,20 @@ export const StaffManagementView: React.FC = () => {
                 />
               </div>
 
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">ZKTeco Employee ID</label>
+                <input
+                  type="text"
+                  value={formAttendanceEmployeeId}
+                  onChange={(e) => setFormAttendanceEmployeeId(e.target.value)}
+                  placeholder="Match the employee code in ZKTeco"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white"
+                />
+                <p className="mt-1 text-[11px] text-slate-500">
+                  Links this staff profile to attendance records from the biometric machine.
+                </p>
+              </div>
+
               {/* Initial Balances */}
               <div>
                 <label className="block font-semibold text-slate-700 mb-1">
@@ -1179,6 +1198,20 @@ export const StaffManagementView: React.FC = () => {
                   onChange={(e) => setFormDesignation(e.target.value)}
                   className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white"
                 />
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">ZKTeco Employee ID</label>
+                <input
+                  type="text"
+                  value={formAttendanceEmployeeId}
+                  onChange={(e) => setFormAttendanceEmployeeId(e.target.value)}
+                  placeholder="Match the employee code in ZKTeco"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white"
+                />
+                <p className="mt-1 text-[11px] text-slate-500">
+                  Links this staff profile to attendance records from the biometric machine.
+                </p>
               </div>
 
               <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">

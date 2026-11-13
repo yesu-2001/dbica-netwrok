@@ -12,12 +12,17 @@ import { AuditTrailView } from './components/AuditTrailView';
 import { CustomizationSettingsView } from './components/CustomizationSettingsView';
 import { NotificationDispatchCenter } from './components/NotificationDispatchCenter';
 import { TimesheetView } from './components/TimesheetView';
+import { MyAttendanceView } from './components/MyAttendanceView';
+import { AttendanceReportView } from './components/AttendanceReportView';
 import { ApplyLeaveModal } from './components/ApplyLeaveModal';
 import { ToastContainer } from './components/ToastContainer';
 import { LoginLandingView } from './components/LoginLandingView';
 import { X } from 'lucide-react';
 
 const DIRECTOR_ONLY_TABS: ActiveTab[] = ['requests', 'analytics', 'audit'];
+const STAFF_TIMESHEET_ROLES = ['Super Admin', 'HR', 'Manager'];
+const MY_TIMESHEET_ROLES = ['HR', 'Manager', 'Staff'];
+const ATTENDANCE_REPORT_ROLES = ['Super Admin', 'HR', 'Manager'];
 
 const MainLayout: React.FC = () => {
   const { activeTab, currentUser } = useApp();
@@ -32,8 +37,14 @@ const MainLayout: React.FC = () => {
   };
 
   const accessibleTab =
-    currentUser.role !== 'Super Admin' && DIRECTOR_ONLY_TABS.includes(activeTab)
+    activeTab === 'staff-attendance' && !ATTENDANCE_REPORT_ROLES.includes(currentUser.role)
+      ? 'my-attendance'
+      : currentUser.role !== 'Super Admin' && DIRECTOR_ONLY_TABS.includes(activeTab)
       ? 'my-leaves'
+      : activeTab === 'staff-timesheets' && !STAFF_TIMESHEET_ROLES.includes(currentUser.role)
+      ? 'my-timesheet'
+      : activeTab === 'my-timesheet' && !MY_TIMESHEET_ROLES.includes(currentUser.role)
+      ? 'staff-timesheets'
       : activeTab;
 
   const renderActiveView = () => {
@@ -42,8 +53,14 @@ const MainLayout: React.FC = () => {
         return <OverviewView onApplyLeave={() => handleOpenApplyModal('Casual')} />;
       case 'my-leaves':
         return <MyLeaveView onApplyLeave={handleOpenApplyModal} />;
-      case 'timesheets':
-        return <TimesheetView />;
+      case 'my-attendance':
+        return <MyAttendanceView />;
+      case 'staff-attendance':
+        return <AttendanceReportView />;
+      case 'staff-timesheets':
+        return <TimesheetView key="staff-timesheets" mode="staff" />;
+      case 'my-timesheet':
+        return <TimesheetView key="my-timesheet" mode="mine" />;
       case 'requests':
         return <LeaveRequestsView />;
       case 'notifications':

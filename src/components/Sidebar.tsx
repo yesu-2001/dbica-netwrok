@@ -9,6 +9,7 @@ import {
   History,
   PlaneTakeoff,
   ClipboardList,
+  CalendarCheck2,
   ShieldCheck,
   Building2,
   Lock,
@@ -56,6 +57,9 @@ export const Sidebar: React.FC = () => {
   const isSuperAdmin = currentUser.role === 'Super Admin';
   const canApplyForLeave = currentUser.role !== 'Super Admin';
   const canManageStaff = currentUser.role === 'Super Admin' || currentUser.role === 'HR';
+  const canViewAttendanceReports = currentUser.role === 'Super Admin' ||
+    currentUser.role === 'HR' ||
+    currentUser.role === 'Manager';
   const canViewAnalytics = isSuperAdmin;
   const canViewAudit = isSuperAdmin;
   const canCustomizeSettings = currentUser.role === 'Super Admin';
@@ -86,11 +90,36 @@ export const Sidebar: React.FC = () => {
       description: 'Balances & personal applications',
     },
     {
-      id: 'timesheets',
-      label: currentUser.role === 'Super Admin' ? 'Staff Timesheets' : 'My Timesheet',
-      icon: <ClipboardList className="w-4 h-4" />,
+      id: 'my-attendance',
+      label: 'My Attendance',
+      icon: <CalendarCheck2 className="w-4 h-4" />,
       visible: true,
-      description: currentUser.role === 'Super Admin' ? 'All staff task updates' : 'Add and review your task updates',
+      description: 'Personal attendance calendar & summary',
+    },
+    {
+      id: 'staff-attendance',
+      label: currentUser.role === 'Manager' ? 'Department Attendance' : 'Staff Attendance',
+      icon: <Users2 className="w-4 h-4" />,
+      visible: canViewAttendanceReports,
+      description: currentUser.role === 'Manager'
+        ? `Attendance summaries for ${currentUser.department}`
+        : 'Staff attendance summaries and daily records',
+    },
+    {
+      id: 'staff-timesheets',
+      label: currentUser.role === 'Manager' ? 'Department Timesheets' : 'Staff Timesheets',
+      icon: <ClipboardList className="w-4 h-4" />,
+      visible: currentUser.role !== 'Staff',
+      description: currentUser.role === 'Manager'
+        ? `View ${currentUser.department} staff task updates`
+        : 'View task updates based on your role',
+    },
+    {
+      id: 'my-timesheet',
+      label: 'My Timesheet',
+      icon: <ClipboardList className="w-4 h-4" />,
+      visible: currentUser.role !== 'Super Admin',
+      description: 'Add and manage your own task updates',
     },
     {
       id: 'requests',

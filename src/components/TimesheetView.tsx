@@ -22,7 +22,7 @@ const emptyDraft = (): TaskDraft => ({
   status: 'In Progress',
 });
 
-export const TimesheetView: React.FC = () => {
+export const TimesheetView: React.FC<{mode: 'staff' | 'mine'}> = ({mode}) => {
   const {
     currentUser,
     staffList,
@@ -34,9 +34,12 @@ export const TimesheetView: React.FC = () => {
     deleteTimesheetEntry,
   } = useApp();
 
-  const isDirector = currentUser.role === 'Super Admin' || currentUser.role === 'HR';
+  const isSuperAdmin = currentUser.role === 'Super Admin';
+  const isStaffTimesheetView = mode === 'staff';
+  const canViewAllStaff = isStaffTimesheetView && (isSuperAdmin || currentUser.role === 'HR');
+  const showStaffColumn = isStaffTimesheetView;
   const isManager = currentUser.role === 'Manager';
-  const canEdit = currentUser.role === 'Staff';
+  const canEdit = mode === 'mine' && !isSuperAdmin;
   const now = new Date();
   const [selectedStaffId, setSelectedStaffId] = useState('all');
   const [startDate, setStartDate] = useState(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`);
@@ -62,15 +65,17 @@ export const TimesheetView: React.FC = () => {
 
   const visibleEntries = useMemo(() => timesheetEntries
     .filter((entry) => {
-      if (canEdit && entry.staffId !== currentUser.id) return false;
+      if (mode === 'mine' && entry.staffId !== currentUser.id) return false;
+      if (isStaffTimesheetView && currentUser.role === 'Staff') return false;
+      if (currentUser.role === 'Staff' && entry.staffId !== currentUser.id) return false;
       if (isManager && entry.department !== currentUser.department && entry.staffId !== currentUser.id) return false;
-      if (isDirector && selectedStaffId !== 'all' && entry.staffId !== selectedStaffId) return false;
+      if (isStaffTimesheetView && selectedStaffId !== 'all' && entry.staffId !== selectedStaffId) return false;
       if (startDate && entry.workDate < startDate) return false;
       if (endDate && entry.workDate > endDate) return false;
       return true;
     })
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
-  [timesheetEntries, canEdit, currentUser.id, currentUser.department, isManager, isDirector, selectedStaffId, startDate, endDate]);
+  [timesheetEntries, mode, currentUser.id, currentUser.role, currentUser.department, isManager, isStaffTimesheetView, canViewAllStaff, selectedStaffId, startDate, endDate]);
 
   const updateDraft = (entry: TimesheetEntry, changes: Partial<TaskDraft>) => {
     setDrafts((current) => ({
@@ -227,7 +232,11 @@ export const TimesheetView: React.FC = () => {
             <h1 className="text-xl font-semibold tracking-tight text-slate-900">Timesheet</h1>
           </div>
           <p className="mt-1 text-sm text-slate-500">
-            {isDirector ? 'View staff tasks for a selected period.' : canEdit ? 'Add and update your work directly in the table.' : 'View recorded staff tasks.'}
+            {isStaffTimesheetView
+              ? isManager
+                ? `View staff tasks for ${currentUser.department}.`
+                : 'View staff tasks for a selected period.'
+              : 'Add and update your work directly in the table.'}
           </p>
         </div>
         {canEdit && (
@@ -239,18 +248,21 @@ export const TimesheetView: React.FC = () => {
         )}
       </header>
 
-      {isDirector && (
+      {isStaffTimesheetView && (
         <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:flex-row sm:items-end">
-          <label className="flex min-w-52 flex-col gap-1 text-xs font-medium text-slate-600">
-            Staff member
-            <select value={selectedStaffId} onChange={(event) => setSelectedStaffId(event.target.value)}
-              className="h-9 rounded-md border border-slate-200 bg-white px-2.5 text-sm text-slate-800">
-              <option value="all">All staff</option>
-              {[...staffList].sort((a, b) => a.name.localeCompare(b.name)).map((staff) => (
-                <option key={staff.id} value={staff.id}>{staff.name}</option>
-              ))}
-            </select>
-          </label>
+          {(canViewAllStaff || isManager) && (
+            <label className="flex min-w-52 flex-col gap-1 text-xs font-medium text-slate-600">
+              Staff member
+              <select value={selectedStaffId} onChange={(event) => setSelectedStaffId(event.target.value)}
+                className="h-9 rounded-md border border-slate-200 bg-white px-2.5 text-sm text-slate-800">
+                <option value="all">All staff</option>
+                {[...staffList]
+                  .filter((staff) => isSuperAdmin || currentUser.role === 'HR' || staff.department === currentUser.department)
+                  .sort((a, b) => a.name.localeCompare(b.name))
+                  .map((staff) => <option key={staff.id} value={staff.id}>{staff.name}</option>)}
+              </select>
+            </label>
+          )}
           <label className="flex flex-col gap-1 text-xs font-medium text-slate-600">
             From
             <input type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)}
@@ -288,7 +300,7 @@ export const TimesheetView: React.FC = () => {
           <table className="w-full min-w-[980px] border-collapse text-left">
             <thead>
               <tr className="bg-slate-50/95 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                {isDirector && <th className="sticky top-0 z-10 border-b border-r border-slate-200 bg-slate-50 px-4 py-3">Staff</th>}
+                {showStaffColumn && <th className="sticky top-0 z-10 border-b border-r border-slate-200 bg-slate-50 px-4 py-3">Staff</th>}
                 <th className="sticky top-0 z-10 border-b border-r border-slate-200 bg-slate-50 px-3 py-3"><span className="inline-flex items-center gap-1"><CalendarDays className="h-3.5 w-3.5" /> Date</span></th>
                 <th className="sticky top-0 z-10 border-b border-r border-slate-200 bg-slate-50 px-3 py-3">Task</th>
                 <th className="sticky top-0 z-10 border-b border-r border-slate-200 bg-slate-50 px-3 py-3">Hours</th>
@@ -304,7 +316,7 @@ export const TimesheetView: React.FC = () => {
                 const isDirty = Boolean(drafts[entry.id]);
                 return (
                   <tr key={entry.id} className="group transition-colors hover:bg-slate-50/70">
-                    {isDirector && <td className="whitespace-nowrap border-b border-r border-slate-100 px-4 py-2.5 text-sm text-slate-700">{entry.staffName}</td>}
+                    {showStaffColumn && <td className="whitespace-nowrap border-b border-r border-slate-100 px-4 py-2.5 text-sm text-slate-700">{entry.staffName}</td>}
                     {canEdit
                       ? renderDraftFields(draft, (changes) => updateDraft(entry, changes))
                       : <>
@@ -351,6 +363,7 @@ export const TimesheetView: React.FC = () => {
               })}
               {newTask && (
                 <tr ref={newTaskRowRef} className="bg-blue-50/70 ring-1 ring-inset ring-blue-100">
+                  {showStaffColumn && <td className="border-b border-r border-slate-100 px-4 py-2.5 text-sm text-slate-500">{currentUser.name}</td>}
                   {renderDraftFields(newTask, (changes) => setNewTask((current) => current ? { ...current, ...changes } : current), true)}
                   <td className="border-b border-slate-100 p-2">
                     <div className="flex items-center gap-1">
@@ -368,7 +381,7 @@ export const TimesheetView: React.FC = () => {
               )}
               {visibleEntries.length === 0 && !newTask && (
                 <tr>
-                  <td colSpan={(isDirector ? 7 : 6) + (canEdit ? 1 : 0)} className="px-4 py-12 text-center">
+                  <td colSpan={6 + (showStaffColumn ? 1 : 0) + (canEdit ? 1 : 0)} className="px-4 py-12 text-center">
                     <p className="text-sm font-medium text-slate-700">
                       {timesheetLoading ? 'Loading timesheets...' : timesheetLoadError ? 'Timesheet data is unavailable' : 'No tasks in this period'}
                     </p>

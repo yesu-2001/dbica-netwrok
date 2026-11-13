@@ -37,6 +37,7 @@ export interface StaffMember {
   id: string;
   userId?: string;
   authUid?: string;
+  attendanceEmployeeId?: string;
   name: string;
   email: string;
   phone: string;
@@ -113,10 +114,56 @@ export interface TimesheetEntry {
   createdAt: string;
 }
 
+export type AttendanceStatus = 'Present' | 'Late' | 'Absent' | 'Holiday' | 'On Leave' | 'Pending';
+
+export interface DailyAttendance {
+  id: string;
+  staffId: string;
+  employeeId: string;
+  employeeName: string;
+  department?: string | null;
+  date: string;
+  month: string;
+  status: AttendanceStatus;
+  isPresent: boolean;
+  isLate: boolean;
+  isOnLeave: boolean;
+  clockIn: string;
+  clockOut: string;
+  punches: string[];
+  workedHours: number;
+  workedFormatted: string;
+  overworkHours: number;
+  overworkFormatted: string;
+}
+
+export interface MonthlyAttendanceSummary {
+  id: string;
+  staffId: string;
+  employeeId: string;
+  employeeName: string;
+  department?: string | null;
+  month: string;
+  totalWorkingDays: number;
+  presentDays: number;
+  absentDays: number;
+  leaveDays: number;
+  attendanceDays: number;
+  lateDays: number;
+  attendanceRate: number;
+  totalWorkedHours: number;
+  totalOverworkHours: number;
+  totalOverworkFormatted: string;
+}
+
 export type ActiveTab =
   | 'overview'
+  | 'my-attendance'
+  | 'staff-attendance'
+  | 'staff-attendance'
   | 'my-leaves'
-  | 'timesheets'
+  | 'staff-timesheets'
+  | 'my-timesheet'
   | 'requests'
   | 'staff'
   | 'analytics'

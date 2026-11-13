@@ -46,12 +46,34 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenMobileMenu, onOpenApplyMod
       title: 'My Leaves & Balance Portfolio',
       subtitle: `Personal leave balances and application status for ${currentUser.name}`,
     },
-    timesheets: {
-      title: currentUser.role === 'Super Admin' ? 'Staff Timesheets' : 'My Timesheet',
+    'my-attendance': {
+      title: 'My Attendance',
+      subtitle: `Attendance records and summary for ${currentUser.name}`,
+    },
+    'staff-attendance': {
+      title: currentUser.role === 'Manager' ? 'Department Attendance' : 'Staff Attendance Report',
+      subtitle: currentUser.role === 'Manager'
+        ? `Attendance summaries for ${currentUser.department}`
+        : 'Attendance summaries and daily records by staff member',
+    },
+    'staff-timesheets': {
+      title: currentUser.role === 'Super Admin' || currentUser.role === 'HR'
+        ? 'Staff Timesheets'
+        : currentUser.role === 'Manager'
+        ? 'Department Timesheets'
+        : 'Staff Timesheets',
       subtitle:
         currentUser.role === 'Super Admin'
           ? 'Review task updates submitted by staff across DBICA'
-          : 'Record tasks you worked on and review your previous updates',
+          : currentUser.role === 'HR'
+          ? 'Review task updates submitted by staff across DBICA'
+          : currentUser.role === 'Manager'
+          ? `Review task updates submitted by staff in ${currentUser.department}`
+          : 'Review staff task updates',
+    },
+    'my-timesheet': {
+      title: 'My Timesheet',
+      subtitle: `Record and manage tasks you worked on, ${currentUser.name}`,
     },
     requests: {
       title: 'Leave Request Approvals',
