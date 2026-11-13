@@ -23,6 +23,7 @@ const DIRECTOR_ONLY_TABS: ActiveTab[] = ['requests', 'analytics', 'audit'];
 const STAFF_TIMESHEET_ROLES = ['Super Admin', 'HR', 'Manager'];
 const MY_TIMESHEET_ROLES = ['HR', 'Manager', 'Staff'];
 const ATTENDANCE_REPORT_ROLES = ['Super Admin', 'HR', 'Manager'];
+const MY_ATTENDANCE_ROLES = ['HR', 'Manager', 'Staff'];
 
 const MainLayout: React.FC = () => {
   const { activeTab, currentUser } = useApp();
@@ -39,6 +40,8 @@ const MainLayout: React.FC = () => {
   const accessibleTab =
     activeTab === 'staff-attendance' && !ATTENDANCE_REPORT_ROLES.includes(currentUser.role)
       ? 'my-attendance'
+      : activeTab === 'my-attendance' && !MY_ATTENDANCE_ROLES.includes(currentUser.role)
+      ? 'staff-attendance'
       : currentUser.role !== 'Super Admin' && DIRECTOR_ONLY_TABS.includes(activeTab)
       ? 'my-leaves'
       : activeTab === 'staff-timesheets' && !STAFF_TIMESHEET_ROLES.includes(currentUser.role)

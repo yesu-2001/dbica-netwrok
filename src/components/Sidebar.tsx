@@ -93,7 +93,7 @@ export const Sidebar: React.FC = () => {
       id: 'my-attendance',
       label: 'My Attendance',
       icon: <CalendarCheck2 className="w-4 h-4" />,
-      visible: true,
+      visible: currentUser.role !== 'Super Admin',
       description: 'Personal attendance calendar & summary',
     },
     {

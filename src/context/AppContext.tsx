@@ -189,6 +189,7 @@ const STORAGE_KEYS = {
 const DIRECTOR_ONLY_TABS: ActiveTab[] = ['requests', 'analytics', 'audit'];
 const STAFF_TIMESHEET_ROLES: StaffMember['role'][] = ['Super Admin', 'HR', 'Manager'];
 const ATTENDANCE_REPORT_ROLES: StaffMember['role'][] = ['Super Admin', 'HR', 'Manager'];
+const MY_ATTENDANCE_ROLES: StaffMember['role'][] = ['HR', 'Manager', 'Staff'];
 
 // Clean legacy v1 and v2 keys containing dummy seed records
 try {
@@ -523,6 +524,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const setActiveTab = (tab: ActiveTab) => {
     if (!isDirector && DIRECTOR_ONLY_TABS.includes(tab)) return;
     if (tab === 'staff-attendance' && !ATTENDANCE_REPORT_ROLES.includes(currentUser.role)) return;
+    if (tab === 'my-attendance' && !MY_ATTENDANCE_ROLES.includes(currentUser.role)) return;
     if (tab === 'staff-timesheets' && !STAFF_TIMESHEET_ROLES.includes(currentUser.role)) return;
     if (tab === 'my-timesheet' && isDirector) return;
     setActiveTabState(tab);
@@ -533,6 +535,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setActiveTabState('my-leaves');
     } else if (activeTab === 'staff-attendance' && !ATTENDANCE_REPORT_ROLES.includes(currentUser.role)) {
       setActiveTabState('my-attendance');
+    } else if (activeTab === 'my-attendance' && !MY_ATTENDANCE_ROLES.includes(currentUser.role)) {
+      setActiveTabState('staff-attendance');
     } else if (activeTab === 'staff-timesheets' && !STAFF_TIMESHEET_ROLES.includes(currentUser.role)) {
       setActiveTabState('my-timesheet');
     } else if (activeTab === 'my-timesheet' && isDirector) {
